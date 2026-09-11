@@ -67,7 +67,7 @@ jobs:
         working-directory: editors/vscode
         run: |
           npm ci
-          npx --yes @vscode/vsce package --skip-license --allow-missing-repository
+          npx --yes @vscode/vsce package
       - uses: actions/upload-artifact@v4
         with:
           name: vscode

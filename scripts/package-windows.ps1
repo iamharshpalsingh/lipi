@@ -18,7 +18,7 @@ Copy-Item target\release\lipi.exe, README.md, LICENSE, scripts\install.ps1, scri
 Copy-Item -Recurse docs, examples $out
 
 Push-Location editors\vscode
-npx --yes @vscode/vsce package --skip-license --allow-missing-repository --out "$out" | Out-Null
+npx --yes @vscode/vsce package --out "$out" | Out-Null
 $vsceOk = $LASTEXITCODE -eq 0
 Pop-Location
 if (-not $vsceOk) { Write-Host "(the VS Code extension couldn't be packaged; the archive is built without it)" }

@@ -27,5 +27,5 @@ To build the package yourself:
 
 ```sh
 npm install
-npx @vscode/vsce package --skip-license --allow-missing-repository
+npx @vscode/vsce package
 ```
