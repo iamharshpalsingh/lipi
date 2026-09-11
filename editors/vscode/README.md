@@ -2,25 +2,32 @@
 
 <img src="images/icon.png" width="64" alt="LiPi">
 
-Language support for [LiPi](../../README.md), the Unified Development Language.
+Language support for **LiPi**, the Unified Development Language.
 
-- Syntax highlighting for `.lipi` files, including `{…}` interpolation
-- `.lipi` files show the LiPi mark in the explorer
-- Automatic indentation after `if`, `for`, function definitions, `with` blocks and so on
-- Comment toggling (`#`), bracket matching, auto-closing quotes and indentation-based folding
+- **Errors and warnings as you type**, with the same codes and hints as `lipi check` and `lipi lint`
+- **Completion** for keywords, the standard library (`math.`, `json.`, `server.`...) and your own names
+- **Hover documentation** for built-ins and your functions (the comments above them)
+- **Go to definition**, including into files loaded with `use`, plus **find references** and the **outline**
+- **Formatting** with `lipi format` (on save by default)
+- Syntax highlighting, `{…}` interpolation, indentation rules, comment toggling and the LiPi file icon
 
-## Try it locally
+## Requirements
 
-Copy or link this folder into your VS Code extensions directory, then restart VS Code:
+The `lipi` program must be installed. The extension runs `lipi lsp`. If
+`lipi` isn't on your PATH, set **LiPi: Path** (`lipi.path`) in settings to the
+full path of `lipi` / `lipi.exe`.
+
+## Install
+
+Install the packaged `lipi-0.2.0.vsix` from the Extensions view (**…** → *Install from VSIX…*), or run:
 
 ```sh
-# Windows (PowerShell)
-New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\lipi-lang.lipi-0.1.0" -Target (Resolve-Path editors\vscode)
-# macOS / Linux
-ln -s "$(pwd)/editors/vscode" ~/.vscode/extensions/lipi-lang.lipi-0.1.0
+code --install-extension lipi-0.2.0.vsix
 ```
 
-Or package it with `npx @vscode/vsce package` and install the `.vsix`.
+To build the package yourself:
 
-Diagnostics, autocomplete and go-to-definition will arrive with the LiPi
-language server (`lipi lsp`), which is part of the 0.5 roadmap.
+```sh
+npm install
+npx @vscode/vsce package --skip-license --allow-missing-repository
+```

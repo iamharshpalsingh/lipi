@@ -1,14 +1,16 @@
 {
   "name": "lipi",
   "displayName": "LiPi",
-  "description": "LiPi language support: syntax highlighting, indentation, brackets, comments and file icons.",
-  "version": "0.1.0",
+  "description": "LiPi language support: errors as you type, completion, hover docs, go to definition, formatting, syntax highlighting and file icons.",
+  "version": "0.2.0",
   "publisher": "lipi-lang",
   "icon": "images/icon.png",
   "galleryBanner": { "color": "#F6F1EA", "theme": "light" },
-  "engines": { "vscode": "^1.75.0" },
-  "categories": ["Programming Languages"],
+  "engines": { "vscode": "^1.82.0" },
+  "categories": ["Programming Languages", "Formatters", "Linters"],
   "keywords": ["lipi", "language"],
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:lipi"],
   "contributes": {
     "languages": [
       {
@@ -28,6 +30,26 @@
         "scopeName": "source.lipi",
         "path": "./syntaxes/lipi.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "LiPi",
+      "properties": {
+        "lipi.path": {
+          "type": "string",
+          "default": "lipi",
+          "description": "The lipi program used for the language server (a full path if it isn't on your PATH)."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[lipi]": {
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "editor.formatOnSave": true
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
   }
 }

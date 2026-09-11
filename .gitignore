@@ -1,4 +1,7 @@
 /target
+node_modules/
+*.vsix
+.lipi-tmp/
 *.db
 todos.json
 **/*.rs.bk

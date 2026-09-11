@@ -1,5 +1,6 @@
 //! `lipi` — the command-line front door to the Lipi language.
 
+mod lsp;
 mod pkg;
 mod repl;
 
@@ -26,6 +27,7 @@ Usage:
   lipi publish [--registry URL]  Publish this package to a registry
   lipi new <name>           Create a new project
   lipi repl                 Start the interactive prompt (also: just `lipi`)
+  lipi lsp                  Start the language server (used by editors such as VS Code)
   lipi doctor               Check your setup
   lipi --version            Show the version
 
@@ -67,6 +69,7 @@ fn run(args: Vec<String>) -> i32 {
         Some("test") => cmd_test(&rest()),
         Some("format" | "fmt") => cmd_format(&rest()),
         Some("lint") => cmd_lint(&rest()),
+        Some("lsp") => lsp::run(),
         Some(cmd @ ("install" | "i" | "remove" | "update" | "publish")) => {
             let result = match cmd {
                 "install" | "i" => pkg::install(&rest()),

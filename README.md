@@ -56,7 +56,9 @@ lipi install ../utils      # add a dependency: a folder, git:URL#tag, or name@^1
 lipi doctor                # check your setup
 ```
 
-Editor support: [`editors/vscode`](editors/vscode) (syntax highlighting, indentation, file icon).
+Editor support: `lipi lsp` is a language server (errors as you type, completion, hover,
+go to definition, references, outline, formatting). The VS Code extension in
+[`editors/vscode`](editors/vscode) uses it and adds highlighting and the LiPi file icon.
 
 ## Errors that teach
 
@@ -164,7 +166,7 @@ LIPI_TEST_POSTGRES_URL=postgres://postgres@localhost:5432/postgres cargo test -p
 | 0.1 | core executable language | ✅ |
 | 0.2 | usability, type system, modules, errors, JSON, files, HTTP client, async, tests, REPL | ✅ |
 | 0.3 | application APIs: HTTP server, middleware, cookies, WebSockets, auth foundations (crypto), database layer on SQLite and PostgreSQL | ✅ |
-| 0.5 | formatter ✅, linter ✅, packages + lipi.lock + folder registries ✅, VS Code extension ✅ · language server (LSP), hosted registry | 🚧 in progress |
+| 0.5 | formatter, linter, packages + lipi.lock + folder registries, language server, VS Code extension ✅ · hosted registry service | ✅ (registry hosting later) |
 | 0.8 | web platform: LiPi UI, JS target, JS interop | planned |
 | 1.0 | stable language and ecosystem | planned |
 | 1.x | WASM, native, desktop, Android, iOS | planned |

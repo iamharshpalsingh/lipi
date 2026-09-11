@@ -555,8 +555,18 @@ shadow an outer variable, and code after `return`/`throw`/`break`/`continue`.
   (LIP7007). Downloads are cached in `~/.lipi/cache` (or `$LIPI_HOME`) and
   re-verified on every use. The public LiPi Registry service isn't online yet.
 
-**Editor:** `editors/vscode` is a VS Code extension with syntax highlighting,
-indentation rules, comment toggling, bracket matching and the LiPi file icon.
+**Language server:** `lipi lsp` speaks the Language Server Protocol over
+stdio, so any LSP editor can use it. It provides:
+
+- diagnostics on every change (`lipi check` errors plus `lipi lint` warnings)
+- completion: keywords, built-ins, module members after `.`, names in the file
+- hover docs for built-ins and user functions (their leading comments)
+- go to definition, also across `use`/`from … use`
+- find references, a document outline, and formatting
+
+**Editor:** `editors/vscode` is the VS Code extension. It connects to
+`lipi lsp` and adds syntax highlighting, indentation rules, comment toggling,
+bracket matching, format-on-save and the LiPi file icon.
 
 ## 18. Grammar (EBNF, v0.1 core)
 
@@ -613,6 +623,6 @@ primary     = INTEGER | DECIMAL | STRING | "true" | "false" | "null" | IDENT
 
 ## 20. Not yet implemented
 
-The language server (LSP), the hosted LiPi Registry service, `lipi build`
+The hosted LiPi Registry service, `lipi build`
 with the JavaScript target, the debugger, regex and encoding modules, UI components and `state`, client/server secret boundaries,
 permission-aware I/O, and generics/traits.
