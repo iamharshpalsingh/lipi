@@ -1,0 +1,41 @@
+# Test app used by cli/tests/server.rs. Port 0 means "any free port".
+server.start toNumber(process.args.first ?? "0")
+
+server.before with request
+    if request.path == "/secret" and request.headers.get("authorization") != "Bearer token123"
+        return server.respond(401, {error: "login required"})
+
+get "/"
+    return "<h1>Hello from LiPi</h1>"
+
+get "/users/:id" with request
+    return {id: toNumber(request.params.id), name: "User {request.params.id}"}
+
+post "/echo" with request
+    return server.respond(201, {received: request.json()})
+
+post "/form" with request
+    return "Hi {request.form.name}"
+
+get "/secret"
+    return "the treasure"
+
+get "/search" with request
+    return request.query
+
+get "/login"
+    return server.respond(200, "ok", {"Set-Cookie": server.cookie("session", "abc")})
+
+get "/boom"
+    throw "handler failed"
+
+get "/nothing"
+    x = 1
+
+get "/stop"
+    server.stop()
+    return "bye"
+
+server.websocket "/ws" with socket
+    socket.on "message" with text
+        socket.send("echo: {text}")

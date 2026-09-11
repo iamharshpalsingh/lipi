@@ -24,6 +24,7 @@ use std::time::Duration;
 pub enum SendValue {
     Nil,
     Bool(bool),
+    Int(i64),
     Num(f64),
     Str(String),
     List(Vec<SendValue>),
@@ -35,6 +36,7 @@ impl SendValue {
         match self {
             SendValue::Nil => Value::Nil,
             SendValue::Bool(b) => Value::Bool(b),
+            SendValue::Int(n) => Value::Int(n),
             SendValue::Num(n) => Value::Num(n),
             SendValue::Str(s) => Value::string(s),
             SendValue::List(items) => Value::list(items.into_iter().map(SendValue::into_value).collect()),
@@ -76,7 +78,8 @@ pub fn await_task(it: &mut Interpreter, task: &Rc<RefCell<TaskState>>, span: Spa
     let result = match state {
         TaskState::Done(r) => r,
         TaskState::Cancelled => {
-            return Err(it.error(
+            return Err(it.err(
+                "LIP4003",
                 "this task was cancelled",
                 span,
                 Some("A cancelled task has no result, so it can't be awaited.".into()),
@@ -88,7 +91,8 @@ pub fn await_task(it: &mut Interpreter, task: &Rc<RefCell<TaskState>>, span: Spa
                 Some(limit) => match rx.recv_timeout(limit) {
                     Ok(r) => Ok(r),
                     Err(RecvTimeoutError::Timeout) => {
-                        return Err(it.error(
+                        return Err(it.err(
+                            "LIP4002",
                             format!("timed out after {} ms", limit.as_millis()),
                             span,
                             Some("The task took too long and was cancelled. Allow more time if it needs longer.".into()),
@@ -99,7 +103,10 @@ pub fn await_task(it: &mut Interpreter, task: &Rc<RefCell<TaskState>>, span: Spa
             };
             match received.and_then(|r| r) {
                 Ok(v) => Ok(map(it, v)),
-                Err(message) => Err(it.thrown(message, span, None)),
+                Err(message) => match it.err("LIP4004", message, span, None) {
+                    Flow::Throw(t) => Err(t),
+                    _ => unreachable!("err always throws"),
+                },
             }
         }
     };

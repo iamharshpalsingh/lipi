@@ -17,6 +17,11 @@ pub struct ObjectData {
     pub fields: RefCell<Fields>,
     pub ty: Option<Rc<TypeInfo>>,
     pub module: Option<String>,
+    /// Marks special runtime objects, such as "response" from server.respond()
+    /// or "db" for database connections.
+    pub tag: Option<&'static str>,
+    /// Native data attached to special objects (e.g. a database connection).
+    pub payload: Option<Rc<dyn std::any::Any>>,
 }
 
 /// A user-defined function together with the environment it closes over.
@@ -45,8 +50,12 @@ pub struct TypeInfo {
 
 #[derive(Clone)]
 pub enum Value {
+    /// `null`
     Nil,
     Bool(bool),
+    /// Integer: 64-bit, overflow is an error.
+    Int(i64),
+    /// Decimal: 64-bit floating point.
     Num(f64),
     Str(Rc<str>),
     List(Rc<RefCell<Vec<Value>>>),
@@ -88,31 +97,46 @@ impl Value {
     }
 
     pub fn object(fields: Fields) -> Value {
-        Value::Object(Rc::new(ObjectData { fields: RefCell::new(fields), ty: None, module: None }))
+        Value::Object(Rc::new(ObjectData { fields: RefCell::new(fields), ty: None, module: None, tag: None, payload: None }))
     }
 
     pub fn native(name: &str, f: impl Fn(&mut Interpreter, &mut Args) -> Result<Value, Flow> + 'static) -> Value {
         Value::Native(Rc::new(Native { name: name.to_string(), f: Box::new(f) }))
     }
 
-    pub fn type_name(&self) -> String {
+    /// The numeric value of an Integer or Decimal.
+    pub fn as_f64(&self) -> Option<f64> {
         match self {
-            Value::Nil => "nil".into(),
-            Value::Bool(_) => "bool".into(),
-            Value::Num(_) => "number".into(),
-            Value::Str(_) => "string".into(),
-            Value::List(_) => "list".into(),
-            Value::Object(o) => match &o.ty {
-                Some(t) => t.decl.name.text.clone(),
-                None => "object".into(),
-            },
-            Value::Func(_) | Value::Native(_) | Value::Method(_) => "function".into(),
-            Value::Type(_) => "type".into(),
-            Value::Task(_) => "task".into(),
+            Value::Int(n) => Some(*n as f64),
+            Value::Num(n) => Some(*n),
+            _ => None,
         }
     }
 
-    /// Only `nil` and `false` are false; everything else counts as true.
+    pub fn is_number(&self) -> bool {
+        matches!(self, Value::Int(_) | Value::Num(_))
+    }
+
+    pub fn type_name(&self) -> String {
+        match self {
+            Value::Nil => "Null".into(),
+            Value::Bool(_) => "Boolean".into(),
+            Value::Int(_) => "Integer".into(),
+            Value::Num(_) => "Decimal".into(),
+            Value::Str(_) => "String".into(),
+            Value::List(_) => "Array".into(),
+            Value::Object(o) => match &o.ty {
+                Some(t) => t.decl.name.text.clone(),
+                None => "Object".into(),
+            },
+            Value::Func(_) | Value::Native(_) | Value::Method(_) => "Function".into(),
+            Value::Type(_) => "Type".into(),
+            Value::Task(_) => "Task".into(),
+        }
+    }
+
+    /// Lenient truthiness, used only for runtime options (not for language conditions,
+    /// which must be real Booleans).
     pub fn truthy(&self) -> bool {
         !matches!(self, Value::Nil | Value::Bool(false))
     }
@@ -125,7 +149,7 @@ impl Value {
         }
     }
 
-    /// A printable form where text is quoted, as it appears inside lists and objects.
+    /// A printable form where text is quoted, as it appears inside Arrays and Objects.
     pub fn repr(&self) -> String {
         let mut out = String::new();
         self.write_repr(&mut out, 0);
@@ -138,9 +162,10 @@ impl Value {
             return;
         }
         match self {
-            Value::Nil => out.push_str("nil"),
+            Value::Nil => out.push_str("null"),
             Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-            Value::Num(n) => out.push_str(&format_number(*n)),
+            Value::Int(n) => out.push_str(&n.to_string()),
+            Value::Num(n) => out.push_str(&format_decimal(*n)),
             Value::Str(s) => out.push_str(&quote(s)),
             Value::List(items) => {
                 out.push('[');
@@ -153,13 +178,13 @@ impl Value {
                 out.push(']');
             }
             Value::Object(o) => {
-                if let Some(t) = &o.ty {
-                    out.push_str(&t.decl.name.text);
-                    out.push(' ');
-                }
                 if let Some(m) = &o.module {
                     out.push_str(&format!("<module {m}>"));
                     return;
+                }
+                if let Some(t) = &o.ty {
+                    out.push_str(&t.decl.name.text);
+                    out.push(' ');
                 }
                 let fields = o.fields.borrow();
                 if fields.is_empty() {
@@ -199,12 +224,14 @@ impl Value {
         }
     }
 
-    /// Structural equality: lists and objects are equal when their contents are.
+    /// Structural equality: Arrays and Objects are equal when their contents are.
+    /// Integers and Decimals compare by numeric value (`5 == 5.0`).
     pub fn equals(&self, other: &Value) -> bool {
         match (self, other) {
             (Value::Nil, Value::Nil) => true,
             (Value::Bool(a), Value::Bool(b)) => a == b,
-            (Value::Num(a), Value::Num(b)) => a == b,
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (a, b) if a.is_number() && b.is_number() => a.as_f64() == b.as_f64(),
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::List(a), Value::List(b)) => {
                 if Rc::ptr_eq(a, b) {
@@ -234,14 +261,14 @@ impl Value {
     }
 }
 
-/// Whole numbers print without a decimal point: `3`, not `3.0`.
-pub fn format_number(n: f64) -> String {
+/// Decimals always show a fractional part (`5.0`), so they're easy to tell from Integers.
+pub fn format_decimal(n: f64) -> String {
     if n.is_nan() {
         "NaN".into()
     } else if n.is_infinite() {
         if n > 0.0 { "infinity".into() } else { "-infinity".into() }
     } else if n == n.trunc() && n.abs() < 1e16 {
-        format!("{}", n as i64)
+        format!("{n:.1}")
     } else {
         format!("{n}")
     }

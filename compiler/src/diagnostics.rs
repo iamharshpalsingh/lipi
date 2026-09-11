@@ -1,7 +1,17 @@
 //! Diagnostics: errors and warnings that teach.
 //!
-//! Every message states what went wrong in plain language, points at the
-//! exact source location and, where possible, offers a safe suggestion.
+//! Every diagnostic answers: what happened, where, why, and what to do next.
+//! Each has a stable code (see docs/SPEC.md §24), for example:
+//!
+//! ```text
+//! ERROR LIP1002: undefined variable "usr"
+//!
+//! main.lipi:8:10
+//!     show usr.name
+//!          ^^^
+//!
+//! Hint: did you mean "user"?
+//! ```
 
 use std::fmt::Write;
 
@@ -34,6 +44,8 @@ pub enum Severity {
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub severity: Severity,
+    /// Stable error code such as "LIP1002".
+    pub code: Option<&'static str>,
     pub message: String,
     pub span: Option<Span>,
     pub hint: Option<String>,
@@ -41,11 +53,11 @@ pub struct Diagnostic {
 
 impl Diagnostic {
     pub fn error(message: impl Into<String>, span: Span) -> Self {
-        Diagnostic { severity: Severity::Error, message: message.into(), span: Some(span), hint: None }
+        Diagnostic { severity: Severity::Error, code: None, message: message.into(), span: Some(span), hint: None }
     }
 
     pub fn warning(message: impl Into<String>, span: Span) -> Self {
-        Diagnostic { severity: Severity::Warning, message: message.into(), span: Some(span), hint: None }
+        Diagnostic { severity: Severity::Warning, code: None, message: message.into(), span: Some(span), hint: None }
     }
 
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
@@ -60,19 +72,38 @@ impl Diagnostic {
         self
     }
 
-    /// Render the diagnostic the way the CLI prints it:
-    ///
-    /// ```text
-    /// ERROR: expected a number
-    ///   --> main.lipi:2:9
-    ///    |
-    ///  2 | price = age + 10
-    ///    |         ^^^
-    /// Hint: "age" is a string. ...
-    /// ```
+    pub fn with_code(mut self, code: &'static str) -> Self {
+        self.code = Some(code);
+        self
+    }
+
+    /// Set the code unless one was already chosen.
+    pub fn code_or(mut self, code: &'static str) -> Self {
+        if self.code.is_none() {
+            self.code = Some(code);
+        }
+        self
+    }
+
+    /// The diagnostic class, derived from the code.
+    pub fn category(&self) -> &'static str {
+        match self.code.and_then(|c| c.get(3..4)) {
+            Some("0") => "Syntax",
+            Some("1") => "Name",
+            Some("2") => "Type",
+            Some("3") => "Module",
+            Some("4") => "Async",
+            Some("5") => "Runtime",
+            Some("6") => "Security",
+            Some("7") => "Package",
+            _ => "Error",
+        }
+    }
+
+    /// Render the diagnostic the way the CLI prints it.
     pub fn render(&self, source: &str, file: &str, color: bool) -> String {
-        let (red, yellow, blue, cyan, bold, reset) = if color {
-            ("\x1b[31m", "\x1b[33m", "\x1b[34m", "\x1b[36m", "\x1b[1m", "\x1b[0m")
+        let (red, yellow, cyan, bold, dim, reset) = if color {
+            ("\x1b[31m", "\x1b[33m", "\x1b[36m", "\x1b[1m", "\x1b[2m", "\x1b[0m")
         } else {
             ("", "", "", "", "", "")
         };
@@ -80,32 +111,31 @@ impl Diagnostic {
             Severity::Error => ("ERROR", red),
             Severity::Warning => ("WARNING", yellow),
         };
+        let code = self.code.map(|c| format!(" {c}")).unwrap_or_default();
         let mut out = String::new();
-        let _ = writeln!(out, "{bold}{label_color}{label}{reset}{bold}: {}{reset}", self.message);
-        if let Some(span) = self.span {
-            let _ = writeln!(out, "  {blue}-->{reset} {}:{}:{}", file, span.line, span.col);
-            if let Some(line_text) = source.lines().nth(span.line.saturating_sub(1) as usize) {
-                let num = span.line.to_string();
-                let pad = " ".repeat(num.len());
-                let line_text = line_text.trim_end_matches('\r');
-                let _ = writeln!(out, " {pad} {blue}|{reset}");
-                let _ = writeln!(out, " {blue}{num} |{reset} {}", line_text.replace('\t', "    "));
-                // Width of the underline: the span's text on this line, at least one caret.
-                let line_start = line_start_offset(source, span.line);
-                let line_end = line_start + line_text.len();
-                let from = span.start.clamp(line_start, line_end);
-                let to = span.end.clamp(from, line_end);
-                let prefix: String = source[line_start..from].replace('\t', "    ");
-                let width = source[from..to].chars().count().max(1);
-                let _ = writeln!(
-                    out,
-                    " {pad} {blue}|{reset} {}{label_color}{}{reset}",
-                    " ".repeat(prefix.chars().count()),
-                    "^".repeat(width)
-                );
+        let _ = writeln!(out, "{bold}{label_color}{label}{code}{reset}{bold}: {}{reset}", self.message);
+        let _ = writeln!(out);
+        match self.span {
+            Some(span) => {
+                let _ = writeln!(out, "{dim}{}:{}:{}{reset}", file, span.line, span.col);
+                if let Some(line_text) = source.lines().nth(span.line.saturating_sub(1) as usize) {
+                    let line_text = line_text.trim_end_matches('\r');
+                    let _ = writeln!(out, "    {}", line_text.replace('\t', "    "));
+                    let line_start = line_start_offset(source, span.line);
+                    let line_end = line_start + line_text.len();
+                    let from = span.start.clamp(line_start, line_end);
+                    let to = span.end.clamp(from, line_end);
+                    let prefix = source[line_start..from].replace('\t', "    ");
+                    let width = source[from..to].chars().count().max(1);
+                    let _ = writeln!(out, "    {}{label_color}{}{reset}", " ".repeat(prefix.chars().count()), "^".repeat(width));
+                }
+            }
+            None => {
+                let _ = writeln!(out, "{dim}{file}{reset}");
             }
         }
         if let Some(hint) = &self.hint {
+            let _ = writeln!(out);
             let _ = writeln!(out, "{cyan}Hint:{reset} {hint}");
         }
         out

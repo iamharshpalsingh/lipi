@@ -1,7 +1,7 @@
 //! Global functions and standard-library modules.
 //!
-//! Everyday modules are available everywhere without an import:
-//! `math`, `json`, `fs`, `env`, `http`, `time`, `process`.
+//! Everyday modules are available everywhere without `use`:
+//! `math`, `json`, `fs`, `env`, `http`, `time`, `process`, `server`, `crypto`.
 
 use crate::http;
 use crate::interp::{Flow, Interpreter};
@@ -13,41 +13,56 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-pub const MODULES: &[&str] = &["math", "json", "fs", "env", "http", "time", "process"];
+pub const MODULES: &[&str] = &["math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database"];
 
-// ----- argument helpers (shared with methods.rs) ------------------------------
+// ----- argument helpers (shared with other modules) ------------------------------
 
 pub fn need<'a>(it: &Interpreter, a: &'a Args, i: usize, pname: &str) -> Result<&'a Value, Flow> {
-    a.get(i, pname).ok_or_else(|| it.error(format!("{}() needs `{pname}`", a.name), a.span, None))
+    a.get(i, pname).ok_or_else(|| it.err("LIP5008", format!("{}() needs \"{pname}\"", a.name), a.span, None))
 }
 
 fn wrong(it: &Interpreter, a: &Args, pname: &str, expected: &str, got: &Value) -> Flow {
-    it.error(
-        format!("{}() expects `{pname}` to be {}, but got {}", a.name, with_article(expected), with_article(&got.type_name())),
+    it.err(
+        "LIP5008",
+        format!("{}() expects \"{pname}\" to be {}, but got {}", a.name, with_article(expected), with_article(&got.type_name())),
         a.span,
         None,
     )
 }
 
+/// Any number (Integer or Decimal) as f64.
 pub fn num(it: &Interpreter, a: &Args, i: usize, pname: &str) -> Result<f64, Flow> {
-    match need(it, a, i, pname)? {
-        Value::Num(n) => Ok(*n),
-        v => Err(wrong(it, a, pname, "number", v)),
-    }
+    let v = need(it, a, i, pname)?;
+    v.as_f64().ok_or_else(|| wrong(it, a, pname, "Number", v))
 }
 
 pub fn opt_num(it: &Interpreter, a: &Args, i: usize, pname: &str) -> Result<Option<f64>, Flow> {
     match a.get(i, pname) {
         None | Some(Value::Nil) => Ok(None),
-        Some(Value::Num(n)) => Ok(Some(*n)),
-        Some(v) => Err(wrong(it, a, pname, "number", v)),
+        Some(v) => v.as_f64().map(Some).ok_or_else(|| wrong(it, a, pname, "Number", v)),
+    }
+}
+
+/// An Integer argument.
+pub fn int(it: &Interpreter, a: &Args, i: usize, pname: &str) -> Result<i64, Flow> {
+    match need(it, a, i, pname)? {
+        Value::Int(n) => Ok(*n),
+        v => Err(wrong(it, a, pname, "Integer", v)),
+    }
+}
+
+pub fn opt_int(it: &Interpreter, a: &Args, i: usize, pname: &str) -> Result<Option<i64>, Flow> {
+    match a.get(i, pname) {
+        None | Some(Value::Nil) => Ok(None),
+        Some(Value::Int(n)) => Ok(Some(*n)),
+        Some(v) => Err(wrong(it, a, pname, "Integer", v)),
     }
 }
 
 pub fn text(it: &Interpreter, a: &Args, i: usize, pname: &str) -> Result<Rc<str>, Flow> {
     match need(it, a, i, pname)? {
         Value::Str(s) => Ok(s.clone()),
-        v => Err(wrong(it, a, pname, "string", v)),
+        v => Err(wrong(it, a, pname, "String", v)),
     }
 }
 
@@ -55,21 +70,22 @@ pub fn opt_text(it: &Interpreter, a: &Args, i: usize, pname: &str) -> Result<Opt
     match a.get(i, pname) {
         None | Some(Value::Nil) => Ok(None),
         Some(Value::Str(s)) => Ok(Some(s.clone())),
-        Some(v) => Err(wrong(it, a, pname, "string", v)),
+        Some(v) => Err(wrong(it, a, pname, "String", v)),
     }
 }
 
 pub fn list(it: &Interpreter, a: &Args, i: usize, pname: &str) -> Result<Rc<RefCell<Vec<Value>>>, Flow> {
     match need(it, a, i, pname)? {
         Value::List(l) => Ok(l.clone()),
-        v => Err(wrong(it, a, pname, "list", v)),
+        v => Err(wrong(it, a, pname, "Array", v)),
     }
 }
 
 pub fn callable(it: &Interpreter, a: &Args, i: usize, pname: &str) -> Result<Value, Flow> {
     match need(it, a, i, pname)? {
         v @ (Value::Func(_) | Value::Native(_) | Value::Method(_) | Value::Type(_)) => Ok(v.clone()),
-        v => Err(it.error(
+        v => Err(it.err(
+            "LIP5008",
             format!("{}() expects a function, but got {}", a.name, with_article(&v.type_name())),
             a.span,
             Some(format!("For example: items.{}(item => item * 2)", a.name)),
@@ -79,29 +95,39 @@ pub fn callable(it: &Interpreter, a: &Args, i: usize, pname: &str) -> Result<Val
 
 fn io_error(it: &Interpreter, a: &Args, path: &str, e: std::io::Error) -> Flow {
     match e.kind() {
-        std::io::ErrorKind::NotFound => it.error(
-            format!("there's no file or folder at `{path}`"),
+        std::io::ErrorKind::NotFound => it.err(
+            "LIP5007",
+            format!("there's no file or folder at \"{path}\""),
             a.span,
-            Some(format!(
-                "Paths are relative to the folder you ran lipi from ({}).",
-                std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default()
-            )),
+            Some(format!("Paths are relative to the folder you ran lipi from ({}).", std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default())),
         ),
-        std::io::ErrorKind::PermissionDenied => it.error(format!("not allowed to access `{path}`"), a.span, None),
-        _ => it.error(format!("couldn't access `{path}`: {e}"), a.span, None),
+        std::io::ErrorKind::PermissionDenied => it.err("LIP5007", format!("not allowed to access \"{path}\""), a.span, None),
+        _ => it.err("LIP5007", format!("couldn't access \"{path}\": {e}"), a.span, None),
     }
 }
 
-fn module(name: &str, entries: Vec<(&str, Value)>) -> Value {
+pub fn module(name: &str, entries: Vec<(&str, Value)>) -> Value {
     let fields: Fields = entries.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
-    Value::Object(Rc::new(ObjectData { fields: RefCell::new(fields), ty: None, module: Some(name.to_string()) }))
+    Value::Object(Rc::new(ObjectData { fields: RefCell::new(fields), ty: None, module: Some(name.to_string()), tag: None, payload: None }))
+}
+
+/// An f64 as an Integer when it is a whole number that fits, else a Decimal.
+pub fn whole(x: f64) -> Value {
+    if x.is_finite() && x == x.trunc() && x.abs() < 9.2e18 {
+        Value::Int(x as i64)
+    } else {
+        Value::Num(x)
+    }
 }
 
 pub fn to_number(v: &Value) -> Value {
     match v {
-        Value::Num(_) => v.clone(),
+        Value::Int(_) | Value::Num(_) => v.clone(),
         Value::Str(s) => {
             let t = s.trim().replace('_', "");
+            if let Ok(n) = t.parse::<i64>() {
+                return Value::Int(n);
+            }
             let plausible = !t.is_empty() && t.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'));
             match t.parse::<f64>() {
                 Ok(n) if plausible => Value::Num(n),
@@ -112,26 +138,21 @@ pub fn to_number(v: &Value) -> Value {
     }
 }
 
-fn numbers_from_args(it: &Interpreter, a: &Args) -> Result<Vec<f64>, Flow> {
+fn numbers_from_args(it: &Interpreter, a: &Args) -> Result<Vec<Value>, Flow> {
     let items: Vec<Value> = match a.pos.as_slice() {
         [Value::List(l)] => l.borrow().clone(),
         other => other.to_vec(),
     };
-    items
-        .iter()
-        .map(|v| match v {
-            Value::Num(n) => Ok(*n),
-            other => Err(it.error(format!("{}() works with numbers, but got {}", a.name, with_article(&other.type_name())), a.span, None)),
-        })
-        .collect()
+    for v in &items {
+        if !v.is_number() {
+            return Err(it.err("LIP5008", format!("{}() works with numbers, but got {}", a.name, with_article(&v.type_name())), a.span, None));
+        }
+    }
+    Ok(items)
 }
 
-fn unix_millis() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f64() * 1000.0)
-        .unwrap_or(0.0)
-        .floor()
+fn unix_millis() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
 /// Days since 1970-01-01 to (year, month, day). From Howard Hinnant's date algorithms.
@@ -148,8 +169,8 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-fn date_parts(ms: f64) -> (i64, u32, u32, u32, u32, u32, u32) {
-    let secs = (ms / 1000.0).floor() as i64;
+fn date_parts(ms: i64) -> (i64, u32, u32, u32, u32, u32, u32) {
+    let secs = ms.div_euclid(1000);
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     let (y, m, d) = civil_from_days(days);
@@ -162,9 +183,28 @@ fn date_parts(ms: f64) -> (i64, u32, u32, u32, u32, u32, u32) {
 pub fn install(g: &Rc<Env>) {
     let def = |name: &str, v: Value| g.define(name, v);
 
-    def("to_number", Value::native("to_number", |_, a| Ok(to_number(a.pos.first().unwrap_or(&Value::Nil)))));
-    def("to_string", Value::native("to_string", |_, a| Ok(Value::string(a.pos.first().unwrap_or(&Value::Nil).display()))));
-    def("type_of", Value::native("type_of", |_, a| Ok(Value::string(a.pos.first().unwrap_or(&Value::Nil).type_name()))));
+    def("toNumber", Value::native("toNumber", |_, a| Ok(to_number(a.pos.first().unwrap_or(&Value::Nil)))));
+    def(
+        "toInteger",
+        Value::native("toInteger", |_, a| {
+            Ok(match to_number(a.pos.first().unwrap_or(&Value::Nil)) {
+                Value::Num(n) if n.is_finite() && n.abs() < 9.2e18 => Value::Int(n.trunc() as i64),
+                Value::Num(_) => Value::Nil,
+                other => other,
+            })
+        }),
+    );
+    def(
+        "toDecimal",
+        Value::native("toDecimal", |_, a| {
+            Ok(match to_number(a.pos.first().unwrap_or(&Value::Nil)) {
+                Value::Int(n) => Value::Num(n as f64),
+                other => other,
+            })
+        }),
+    );
+    def("toString", Value::native("toString", |_, a| Ok(Value::string(a.pos.first().unwrap_or(&Value::Nil).display()))));
+    def("typeOf", Value::native("typeOf", |_, a| Ok(Value::string(a.pos.first().unwrap_or(&Value::Nil).type_name()))));
     def(
         "input",
         Value::native("input", |_, a| {
@@ -183,25 +223,26 @@ pub fn install(g: &Rc<Env>) {
     def(
         "assert",
         Value::native("assert", |it, a| {
-            if need(it, a, 0, "condition")?.truthy() {
+            let cond = need(it, a, 0, "condition")?.clone();
+            if it.expect_bool(&cond, a.span, "the condition given to assert()")? {
                 return Ok(Value::Nil);
             }
             let message = match a.get(1, "message") {
                 Some(m) => format!("assertion failed: {}", m.display()),
                 None => "assertion failed".to_string(),
             };
-            Err(it.error(message, a.span, None))
+            Err(it.err("LIP5010", message, a.span, None))
         }),
     );
     def(
-        "assert_equal",
-        Value::native("assert_equal", |it, a| {
+        "assertEqual",
+        Value::native("assertEqual", |it, a| {
             let actual = need(it, a, 0, "actual")?;
             let expected = need(it, a, 1, "expected")?;
             if actual.equals(expected) {
                 return Ok(Value::Nil);
             }
-            Err(it.error(format!("expected {}, but got {}", expected.repr(), actual.repr()), a.span, None))
+            Err(it.err("LIP5010", format!("expected {}, but got {}", expected.repr(), actual.repr()), a.span, None))
         }),
     );
     def(
@@ -249,37 +290,82 @@ pub fn install(g: &Rc<Env>) {
     def("http", http_module());
     def("time", time_module());
     def("process", process_module());
+    def("server", module("server", crate::server::entries()));
+    def("crypto", module("crypto", crate::crypto::entries()));
+    def("database", crate::db::module());
+    // Routes can also be declared without the `server.` prefix: get "/users" ...
+    for (name, route) in crate::server::route_globals() {
+        def(name, route);
+    }
 }
 
 fn math_module() -> Value {
-    fn unary(name: &'static str, f: fn(f64) -> f64) -> (&'static str, Value) {
+    fn decimal(name: &'static str, f: fn(f64) -> f64) -> (&'static str, Value) {
         (name, Value::native(name, move |it, a| Ok(Value::Num(f(num(it, a, 0, "x")?)))))
+    }
+    fn to_int(name: &'static str, f: fn(f64) -> f64) -> (&'static str, Value) {
+        (
+            name,
+            Value::native(name, move |it, a| match need(it, a, 0, "x")? {
+                Value::Int(n) => Ok(Value::Int(*n)),
+                _ => Ok(whole(f(num(it, a, 0, "x")?))),
+            }),
+        )
     }
     let mut entries = vec![
         ("pi", Value::Num(std::f64::consts::PI)),
         ("e", Value::Num(std::f64::consts::E)),
         ("infinity", Value::Num(f64::INFINITY)),
-        unary("sqrt", f64::sqrt),
-        unary("abs", f64::abs),
-        unary("floor", f64::floor),
-        unary("ceil", f64::ceil),
-        unary("sin", f64::sin),
-        unary("cos", f64::cos),
-        unary("tan", f64::tan),
-        unary("exp", f64::exp),
-        unary("sign", f64::signum),
-        unary("log10", f64::log10),
+        decimal("sqrt", f64::sqrt),
+        decimal("sin", f64::sin),
+        decimal("cos", f64::cos),
+        decimal("tan", f64::tan),
+        decimal("exp", f64::exp),
+        decimal("log10", f64::log10),
+        to_int("floor", f64::floor),
+        to_int("ceil", f64::ceil),
     ];
+    entries.push((
+        "abs",
+        Value::native("abs", |it, a| match need(it, a, 0, "x")? {
+            Value::Int(n) => Ok(Value::Int(n.checked_abs().ok_or_else(|| it.err("LIP5009", "this Integer calculation overflowed", a.span, None))?)),
+            _ => Ok(Value::Num(num(it, a, 0, "x")?.abs())),
+        }),
+    ));
+    entries.push((
+        "sign",
+        Value::native("sign", |it, a| {
+            let x = num(it, a, 0, "x")?;
+            Ok(Value::Int(if x > 0.0 { 1 } else if x < 0.0 { -1 } else { 0 }))
+        }),
+    ));
     entries.push((
         "round",
         Value::native("round", |it, a| {
             let x = num(it, a, 0, "x")?;
-            let digits = opt_num(it, a, 1, "digits")?.unwrap_or(0.0);
-            let factor = 10f64.powi(digits as i32);
-            Ok(Value::Num((x * factor).round() / factor))
+            match opt_int(it, a, 1, "digits")? {
+                None => Ok(match need(it, a, 0, "x")? {
+                    Value::Int(n) => Value::Int(*n),
+                    _ => whole(x.round()),
+                }),
+                Some(d) => {
+                    let factor = 10f64.powi(d as i32);
+                    Ok(Value::Num((x * factor).round() / factor))
+                }
+            }
         }),
     ));
-    entries.push(("pow", Value::native("pow", |it, a| Ok(Value::Num(num(it, a, 0, "base")?.powf(num(it, a, 1, "exponent")?))))));
+    entries.push((
+        "pow",
+        Value::native("pow", |it, a| match (need(it, a, 0, "base")?, need(it, a, 1, "exponent")?) {
+            (Value::Int(b), Value::Int(e)) if *e >= 0 => u32::try_from(*e)
+                .ok()
+                .and_then(|e| b.checked_pow(e))
+                .map(Value::Int)
+                .ok_or_else(|| it.err("LIP5009", "this Integer calculation overflowed", a.span, None)),
+            _ => Ok(Value::Num(num(it, a, 0, "base")?.powf(num(it, a, 1, "exponent")?))),
+        }),
+    ));
     entries.push((
         "log",
         Value::native("log", |it, a| {
@@ -294,28 +380,40 @@ fn math_module() -> Value {
     entries.push((
         "clamp",
         Value::native("clamp", |it, a| {
+            let values = [need(it, a, 0, "x")?.clone(), need(it, a, 1, "min")?.clone(), need(it, a, 2, "max")?.clone()];
+            if let [Value::Int(x), Value::Int(lo), Value::Int(hi)] = values {
+                return Ok(Value::Int(x.max(lo).min(hi)));
+            }
             let (x, lo, hi) = (num(it, a, 0, "x")?, num(it, a, 1, "min")?, num(it, a, 2, "max")?);
             Ok(Value::Num(x.max(lo).min(hi)))
         }),
     ));
-    entries.push((
-        "min",
-        Value::native("min", |it, a| Ok(numbers_from_args(it, a)?.into_iter().reduce(f64::min).map(Value::Num).unwrap_or(Value::Nil))),
-    ));
-    entries.push((
-        "max",
-        Value::native("max", |it, a| Ok(numbers_from_args(it, a)?.into_iter().reduce(f64::max).map(Value::Num).unwrap_or(Value::Nil))),
-    ));
+    for (name, want_min) in [("min", true), ("max", false)] {
+        entries.push((
+            name,
+            Value::native(name, move |it, a| {
+                let items = numbers_from_args(it, a)?;
+                Ok(items
+                    .into_iter()
+                    .reduce(|x, y| {
+                        let (fx, fy) = (x.as_f64().unwrap_or(0.0), y.as_f64().unwrap_or(0.0));
+                        if (want_min && fy < fx) || (!want_min && fy > fx) { y } else { x }
+                    })
+                    .unwrap_or(Value::Nil))
+            }),
+        ));
+    }
     entries.push(("random", Value::native("random", |it, _| Ok(Value::Num(it.next_random())))));
     entries.push((
-        "random_int",
-        Value::native("random_int", |it, a| {
-            let lo = num(it, a, 0, "min")?.ceil();
-            let hi = num(it, a, 1, "max")?.floor();
+        "randomInt",
+        Value::native("randomInt", |it, a| {
+            let lo = int(it, a, 0, "min")?;
+            let hi = int(it, a, 1, "max")?;
             if hi < lo {
-                return Err(it.error("random_int() needs min to be less than or equal to max", a.span, None));
+                return Err(it.err("LIP5008", "randomInt() needs min to be less than or equal to max", a.span, None));
             }
-            Ok(Value::Num(lo + (it.next_random() * (hi - lo + 1.0)).floor()))
+            let span = (hi - lo + 1) as f64;
+            Ok(Value::Int(lo + (it.next_random() * span).floor() as i64))
         }),
     ));
     module("math", entries)
@@ -356,10 +454,11 @@ fn fs_module() -> Value {
                     let content = match need(it, a, 1, "text")? {
                         Value::Str(s) => s.to_string(),
                         other => {
-                            return Err(it.error(
-                                format!("fs.write() writes text, but got {}", with_article(&other.type_name())),
+                            return Err(it.err(
+                                "LIP5008",
+                                format!("fs.write() writes a String, but got {}", with_article(&other.type_name())),
                                 a.span,
-                                Some("Convert it first, for example with json.stringify(value) or to_string(value).".into()),
+                                Some("Convert it first, for example with json.stringify(value) or toString(value).".into()),
                             ))
                         }
                     };
@@ -382,7 +481,7 @@ fn fs_module() -> Value {
                 }),
             ),
             ("exists", Value::native("exists", |it, a| Ok(Value::Bool(std::path::Path::new(&*text(it, a, 0, "path")?).exists())))),
-            ("is_dir", Value::native("is_dir", |it, a| Ok(Value::Bool(std::path::Path::new(&*text(it, a, 0, "path")?).is_dir())))),
+            ("isDir", Value::native("isDir", |it, a| Ok(Value::Bool(std::path::Path::new(&*text(it, a, 0, "path")?).is_dir())))),
             (
                 "list",
                 Value::native("list", |it, a| {
@@ -394,8 +493,8 @@ fn fs_module() -> Value {
                 }),
             ),
             (
-                "make_dir",
-                Value::native("make_dir", |it, a| {
+                "makeDir",
+                Value::native("makeDir", |it, a| {
                     let path = text(it, a, 0, "path")?;
                     std::fs::create_dir_all(&*path).map(|_| Value::Nil).map_err(|e| io_error(it, a, &path, e))
                 }),
@@ -441,7 +540,7 @@ fn env_module() -> Value {
                 Value::native("load", |it, a| {
                     let path = opt_text(it, a, 0, "path")?.unwrap_or_else(|| Rc::from(".env"));
                     let content = std::fs::read_to_string(&*path).map_err(|e| io_error(it, a, &path, e))?;
-                    let mut count = 0.0;
+                    let mut count = 0;
                     for line in content.lines() {
                         let line = line.trim();
                         if line.is_empty() || line.starts_with('#') {
@@ -452,10 +551,10 @@ fn env_module() -> Value {
                             let v = v.trim();
                             let v = v.strip_prefix('"').and_then(|v| v.strip_suffix('"')).unwrap_or(v);
                             std::env::set_var(k.trim(), v);
-                            count += 1.0;
+                            count += 1;
                         }
                     }
-                    Ok(Value::Num(count))
+                    Ok(Value::Int(count))
                 }),
             ),
         ],
@@ -477,23 +576,25 @@ fn http_module() -> Value {
 }
 
 fn time_module() -> Value {
+    fn time_arg(it: &Interpreter, a: &Args) -> Result<i64, Flow> {
+        Ok(opt_num(it, a, 0, "time")?.map(|t| t as i64).unwrap_or_else(unix_millis))
+    }
     module(
         "time",
         vec![
-            ("now", Value::native("now", |_, _| Ok(Value::Num(unix_millis())))),
+            ("now", Value::native("now", |_, _| Ok(Value::Int(unix_millis())))),
             (
                 "date",
                 Value::native("date", |it, a| {
-                    let ms = opt_num(it, a, 0, "time")?.unwrap_or_else(unix_millis);
-                    let (y, mo, d, h, mi, s, wd) = date_parts(ms);
+                    let (y, mo, d, h, mi, s, wd) = date_parts(time_arg(it, a)?);
                     const DAYS: [&str; 7] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
                     let mut f = Fields::new();
-                    f.insert("year".into(), Value::Num(y as f64));
-                    f.insert("month".into(), Value::Num(mo as f64));
-                    f.insert("day".into(), Value::Num(d as f64));
-                    f.insert("hour".into(), Value::Num(h as f64));
-                    f.insert("minute".into(), Value::Num(mi as f64));
-                    f.insert("second".into(), Value::Num(s as f64));
+                    f.insert("year".into(), Value::Int(y));
+                    f.insert("month".into(), Value::Int(mo as i64));
+                    f.insert("day".into(), Value::Int(d as i64));
+                    f.insert("hour".into(), Value::Int(h as i64));
+                    f.insert("minute".into(), Value::Int(mi as i64));
+                    f.insert("second".into(), Value::Int(s as i64));
                     f.insert("weekday".into(), Value::text(DAYS[wd as usize]));
                     Ok(Value::object(f))
                 }),
@@ -501,8 +602,7 @@ fn time_module() -> Value {
             (
                 "iso",
                 Value::native("iso", |it, a| {
-                    let ms = opt_num(it, a, 0, "time")?.unwrap_or_else(unix_millis);
-                    let (y, mo, d, h, mi, s, _) = date_parts(ms);
+                    let (y, mo, d, h, mi, s, _) = date_parts(time_arg(it, a)?);
                     Ok(Value::string(format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")))
                 }),
             ),
@@ -519,14 +619,11 @@ fn process_module() -> Value {
             (
                 "exit",
                 Value::native("exit", |it, a| {
-                    let code = opt_num(it, a, 0, "code")?.unwrap_or(0.0);
+                    let code = opt_int(it, a, 0, "code")?.unwrap_or(0);
                     Err(Flow::Exit(code as i32))
                 }),
             ),
-            (
-                "cwd",
-                Value::native("cwd", |_, _| Ok(Value::string(std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default()))),
-            ),
+            ("cwd", Value::native("cwd", |_, _| Ok(Value::string(std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default())))),
             (
                 "run",
                 Value::native("run", |it, a| {
@@ -536,9 +633,9 @@ fn process_module() -> Value {
                     } else {
                         std::process::Command::new("sh").args(["-c", &command]).output()
                     };
-                    let out = output.map_err(|e| it.error(format!("couldn't run `{command}`: {e}"), a.span, None))?;
+                    let out = output.map_err(|e| it.err("LIP5007", format!("couldn't run \"{command}\": {e}"), a.span, None))?;
                     let mut f = Fields::new();
-                    f.insert("code".into(), Value::Num(out.status.code().unwrap_or(-1) as f64));
+                    f.insert("code".into(), Value::Int(out.status.code().unwrap_or(-1) as i64));
                     f.insert("output".into(), Value::string(String::from_utf8_lossy(&out.stdout).into_owned()));
                     f.insert("error".into(), Value::string(String::from_utf8_lossy(&out.stderr).into_owned()));
                     Ok(Value::object(f))
@@ -555,13 +652,14 @@ mod tests {
     #[test]
     fn dates() {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
-        let (y, m, d, _, _, _, wd) = date_parts(1_789_084_800_000.0); // 2026-09-11
+        let (y, m, d, _, _, _, wd) = date_parts(1_789_084_800_000); // 2026-09-11
         assert_eq!((y, m, d, wd), (2026, 9, 11, 5));
     }
 
     #[test]
     fn number_parsing() {
-        assert!(matches!(to_number(&Value::text(" 42 ")), Value::Num(n) if n == 42.0));
+        assert!(matches!(to_number(&Value::text(" 42 ")), Value::Int(42)));
+        assert!(matches!(to_number(&Value::text("2.5")), Value::Num(n) if n == 2.5));
         assert!(matches!(to_number(&Value::text("abc")), Value::Nil));
         assert!(matches!(to_number(&Value::text("inf")), Value::Nil));
     }

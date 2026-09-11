@@ -1,9 +1,9 @@
-//! Built-in methods and properties of text, lists, numbers, objects and tasks.
+//! Built-in methods and properties of Strings, Arrays, numbers, Objects and tasks.
 //!
-//! Methods that change a list in place: push, pop, insert, remove_at, remove.
-//! Everything else (sort, reverse, map, filter, slice...) returns a new list.
+//! Methods that change an Array in place: push, pop, insert, removeAt, remove.
+//! Everything else (sort, reverse, map, filter, slice...) returns a new Array.
 
-use crate::builtins::{callable, need, num, opt_num, opt_text, text, to_number};
+use crate::builtins::{callable, int, need, opt_int, opt_text, text, to_number, whole};
 use crate::interp::{Flow, Interpreter};
 use crate::task;
 use crate::value::*;
@@ -14,11 +14,12 @@ use std::rc::Rc;
 
 pub fn members_for(v: &Value) -> Option<(&'static str, &'static [&'static str])> {
     Some(match v {
-        Value::Str(_) => ("string", STRING_MEMBERS),
-        Value::List(_) => ("list", LIST_MEMBERS),
-        Value::Num(_) => ("number", NUMBER_MEMBERS),
-        Value::Task(_) => ("task", TASK_MEMBERS),
-        Value::Object(_) => ("object", OBJECT_MEMBERS),
+        Value::Str(_) => ("String", STRING_MEMBERS),
+        Value::List(_) => ("Array", LIST_MEMBERS),
+        Value::Int(_) => ("Integer", NUMBER_MEMBERS),
+        Value::Num(_) => ("Decimal", NUMBER_MEMBERS),
+        Value::Task(_) => ("Task", TASK_MEMBERS),
+        Value::Object(_) => ("Object", OBJECT_MEMBERS),
         _ => return None,
     })
 }
@@ -26,8 +27,8 @@ pub fn members_for(v: &Value) -> Option<(&'static str, &'static [&'static str])>
 /// Properties are read without parentheses: `items.length`, `items.first`.
 pub fn property(v: &Value, name: &str) -> Option<Value> {
     match (v, name) {
-        (Value::Str(s), "length") => Some(Value::Num(s.chars().count() as f64)),
-        (Value::List(l), "length") => Some(Value::Num(l.borrow().len() as f64)),
+        (Value::Str(s), "length") => Some(Value::Int(s.chars().count() as i64)),
+        (Value::List(l), "length") => Some(Value::Int(l.borrow().len() as i64)),
         (Value::List(l), "first") => Some(l.borrow().first().cloned().unwrap_or(Value::Nil)),
         (Value::List(l), "last") => Some(l.borrow().last().cloned().unwrap_or(Value::Nil)),
         _ => None,
@@ -36,16 +37,12 @@ pub fn property(v: &Value, name: &str) -> Option<Value> {
 
 pub fn call(it: &mut Interpreter, recv: &Value, name: &str, a: &mut Args) -> Option<Result<Value, Flow>> {
     if property(recv, name).is_some() || (matches!(recv, Value::Object(_)) && name == "length") {
-        return Some(Err(it.error(
-            format!("`{name}` is a property, not a method"),
-            a.span,
-            Some(format!("Write it without parentheses: .{name}")),
-        )));
+        return Some(Err(it.err("LIP5008", format!("\"{name}\" is a property, not a method"), a.span, Some(format!("Write it without parentheses: .{name}")))));
     }
     let result = match recv {
         Value::Str(s) => string_method(it, s, name, a),
         Value::List(l) => list_method(it, l, name, a),
-        Value::Num(n) => number_method(it, *n, name, a),
+        Value::Int(_) | Value::Num(_) => number_method(it, recv, name, a),
         Value::Object(o) => object_method(it, o, name, a),
         Value::Task(t) => task_method(it, t, name, a),
         _ => return None,
@@ -54,13 +51,13 @@ pub fn call(it: &mut Interpreter, recv: &Value, name: &str, a: &mut Args) -> Opt
 }
 
 /// Turn (possibly negative) start/end positions into a clamped range.
-fn bounds(len: usize, start: Option<f64>, end: Option<f64>) -> (usize, usize) {
-    let norm = |x: f64| -> usize {
-        let x = if x < 0.0 { len as f64 + x } else { x };
-        x.clamp(0.0, len as f64) as usize
+fn bounds(len: usize, start: Option<i64>, end: Option<i64>) -> (usize, usize) {
+    let norm = |x: i64| -> usize {
+        let x = if x < 0 { len as i64 + x } else { x };
+        x.clamp(0, len as i64) as usize
     };
-    let s = norm(start.unwrap_or(0.0));
-    let e = norm(end.unwrap_or(len as f64));
+    let s = norm(start.unwrap_or(0));
+    let e = norm(end.unwrap_or(len as i64));
     (s, e.max(s))
 }
 
@@ -70,8 +67,8 @@ fn string_method(it: &mut Interpreter, s: &Rc<str>, name: &str, a: &mut Args) ->
         "upper" => Value::string(s.to_uppercase()),
         "lower" => Value::string(s.to_lowercase()),
         "trim" => Value::text(s.trim()),
-        "trim_start" => Value::text(s.trim_start()),
-        "trim_end" => Value::text(s.trim_end()),
+        "trimStart" => Value::text(s.trim_start()),
+        "trimEnd" => Value::text(s.trim_end()),
         "split" => {
             let parts: Vec<Value> = match opt_text(it, a, 0, "separator")? {
                 None => s.split_whitespace().map(Value::text).collect(),
@@ -81,54 +78,55 @@ fn string_method(it: &mut Interpreter, s: &Rc<str>, name: &str, a: &mut Args) ->
             Value::list(parts)
         }
         "contains" => Value::Bool(s.contains(&*text(it, a, 0, "text")?)),
-        "starts_with" => Value::Bool(s.starts_with(&*text(it, a, 0, "text")?)),
-        "ends_with" => Value::Bool(s.ends_with(&*text(it, a, 0, "text")?)),
+        "startsWith" => Value::Bool(s.starts_with(&*text(it, a, 0, "text")?)),
+        "endsWith" => Value::Bool(s.ends_with(&*text(it, a, 0, "text")?)),
         "replace" => Value::string(s.replace(&*text(it, a, 0, "old")?, &text(it, a, 1, "new")?)),
-        "index_of" => {
+        "indexOf" => {
             let needle = text(it, a, 0, "text")?;
             match s.find(&*needle) {
-                Some(b) => Value::Num(s[..b].chars().count() as f64),
+                Some(b) => Value::Int(s[..b].chars().count() as i64),
                 None => Value::Nil,
             }
         }
         "slice" => {
             let c = chars();
-            let (st, en) = bounds(c.len(), opt_num(it, a, 0, "start")?, opt_num(it, a, 1, "end")?);
+            let (st, en) = bounds(c.len(), opt_int(it, a, 0, "start")?, opt_int(it, a, 1, "end")?);
             Value::string(c[st..en].iter().collect())
         }
         "repeat" => {
-            let n = num(it, a, 0, "count")?;
-            if n < 0.0 {
-                return Err(it.error("repeat() needs a count that isn't negative", a.span, None));
+            let n = int(it, a, 0, "count")?;
+            if n < 0 {
+                return Err(it.err("LIP5008", "repeat() needs a count that isn't negative", a.span, None));
             }
             Value::string(s.repeat(n as usize))
         }
         "chars" => Value::list(s.chars().map(|c| Value::string(c.to_string())).collect()),
         "lines" => Value::list(s.lines().map(Value::text).collect()),
-        "is_empty" => Value::Bool(s.is_empty()),
-        "pad_start" | "pad_end" => {
-            let width = num(it, a, 0, "width")?.max(0.0) as usize;
+        "isEmpty" => Value::Bool(s.is_empty()),
+        "padStart" | "padEnd" => {
+            let width = int(it, a, 0, "width")?.max(0) as usize;
             let fill = opt_text(it, a, 1, "fill")?.unwrap_or_else(|| Rc::from(" "));
             let len = s.chars().count();
             if len >= width || fill.is_empty() {
                 Value::Str(s.clone())
             } else {
                 let padding: String = fill.chars().cycle().take(width - len).collect();
-                Value::string(if name == "pad_start" { format!("{padding}{s}") } else { format!("{s}{padding}") })
+                Value::string(if name == "padStart" { format!("{padding}{s}") } else { format!("{s}{padding}") })
             }
         }
         "reverse" => Value::string(s.chars().rev().collect()),
-        "to_number" => to_number(&Value::Str(s.clone())),
+        "toNumber" => to_number(&Value::Str(s.clone())),
         _ => return Ok(None),
     }))
 }
 
-fn position(it: &Interpreter, a: &Args, i: f64, len: usize, allow_end: bool) -> Result<usize, Flow> {
-    let idx = if i < 0.0 { len as f64 + i } else { i };
-    let max = if allow_end { len as f64 } else { len as f64 - 1.0 };
-    if idx.fract() != 0.0 || idx < 0.0 || idx > max {
-        return Err(it.error(
-            format!("position {} is outside the list (it has {len} items)", format_number(i)),
+fn position(it: &Interpreter, a: &Args, i: i64, len: usize, allow_end: bool) -> Result<usize, Flow> {
+    let idx = if i < 0 { len as i64 + i } else { i };
+    let max = if allow_end { len as i64 } else { len as i64 - 1 };
+    if idx < 0 || idx > max {
+        return Err(it.err(
+            "LIP5001",
+            format!("index {i} is outside array length {len}"),
             a.span,
             Some("Positions start at 0. Negative positions count from the end: -1 is the last item.".into()),
         ));
@@ -138,14 +136,13 @@ fn position(it: &Interpreter, a: &Args, i: f64, len: usize, allow_end: bool) -> 
 
 fn compare_values(x: &Value, y: &Value) -> Option<Ordering> {
     match (x, y) {
-        (Value::Num(a), Value::Num(b)) => a.partial_cmp(b),
         (Value::Str(a), Value::Str(b)) => Some(a.cmp(b)),
-        _ => None,
+        (a, b) => a.as_f64()?.partial_cmp(&b.as_f64()?),
     }
 }
 
 fn check_sortable(it: &Interpreter, a: &Args, keys: &[Value]) -> Result<(), Flow> {
-    let all_num = keys.iter().all(|k| matches!(k, Value::Num(_)));
+    let all_num = keys.iter().all(Value::is_number);
     let all_str = keys.iter().all(|k| matches!(k, Value::Str(_)));
     if all_num || all_str {
         return Ok(());
@@ -153,20 +150,22 @@ fn check_sortable(it: &Interpreter, a: &Args, keys: &[Value]) -> Result<(), Flow
     let mut kinds: Vec<String> = keys.iter().map(|k| k.type_name()).collect();
     kinds.sort();
     kinds.dedup();
-    Err(it.error(
-        format!("can't sort values that are {}", kinds.join(" and ")),
+    Err(it.err(
+        "LIP5008",
+        format!("cannot sort values that are {}", kinds.join(" and ")),
         a.span,
-        Some("sort() works on all-number or all-text lists. Use sort_by(item => ...) to choose what to sort by.".into()),
+        Some("sort() works on all-number or all-String Arrays. Use sortBy(item => ...) to choose what to sort by.".into()),
     ))
 }
 
 fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a: &mut Args) -> Result<Option<Value>, Flow> {
     let snapshot = || l.borrow().clone();
     let span = a.span;
+    let what = format!("the function given to {name}()");
     Ok(Some(match name {
         "push" => {
             if a.pos.is_empty() {
-                return Err(it.error("push() needs an item to add", span, None));
+                return Err(it.err("LIP5008", "push() needs an item to add", span, None));
             }
             l.borrow_mut().extend(a.pos.drain(..));
             Value::Nil
@@ -175,19 +174,19 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
             let item = l.borrow_mut().pop();
             match item {
                 Some(v) => v,
-                None => return Err(it.error("can't pop from an empty list", span, Some("Check .is_empty() first.".into()))),
+                None => return Err(it.err("LIP5001", "cannot pop from an empty Array", span, Some("Check .isEmpty() first.".into()))),
             }
         }
         "insert" => {
             let len = l.borrow().len();
-            let i = position(it, a, num(it, a, 0, "position")?, len, true)?;
+            let i = position(it, a, int(it, a, 0, "position")?, len, true)?;
             let item = need(it, a, 1, "item")?.clone();
             l.borrow_mut().insert(i, item);
             Value::Nil
         }
-        "remove_at" => {
+        "removeAt" => {
             let len = l.borrow().len();
-            let i = position(it, a, num(it, a, 0, "position")?, len, false)?;
+            let i = position(it, a, int(it, a, 0, "position")?, len, false)?;
             l.borrow_mut().remove(i)
         }
         "remove" => {
@@ -205,10 +204,10 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
             let item = need(it, a, 0, "item")?;
             Value::Bool(l.borrow().iter().any(|x| x.equals(item)))
         }
-        "index_of" => {
+        "indexOf" => {
             let item = need(it, a, 0, "item")?;
             match l.borrow().iter().position(|x| x.equals(item)) {
-                Some(i) => Value::Num(i as f64),
+                Some(i) => Value::Int(i as i64),
                 None => Value::Nil,
             }
         }
@@ -220,7 +219,7 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
             let f = callable(it, a, 0, "function")?;
             let mut out = Vec::new();
             for (i, item) in snapshot().into_iter().enumerate() {
-                out.push(it.call_callback(&f, vec![item, Value::Num(i as f64)], span)?);
+                out.push(it.call_callback(&f, vec![item, Value::Int(i as i64)], span)?);
             }
             Value::list(out)
         }
@@ -228,7 +227,8 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
             let f = callable(it, a, 0, "function")?;
             let mut out = Vec::new();
             for (i, item) in snapshot().into_iter().enumerate() {
-                if it.call_callback(&f, vec![item.clone(), Value::Num(i as f64)], span)?.truthy() {
+                let keep = it.call_callback(&f, vec![item.clone(), Value::Int(i as i64)], span)?;
+                if it.expect_bool(&keep, span, &what)? {
                     out.push(item);
                 }
             }
@@ -237,7 +237,7 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
         "each" => {
             let f = callable(it, a, 0, "function")?;
             for (i, item) in snapshot().into_iter().enumerate() {
-                it.call_callback(&f, vec![item, Value::Num(i as f64)], span)?;
+                it.call_callback(&f, vec![item, Value::Int(i as i64)], span)?;
             }
             Value::Nil
         }
@@ -259,7 +259,8 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
         "find" => {
             let f = callable(it, a, 0, "function")?;
             for item in snapshot() {
-                if it.call_callback(&f, vec![item.clone()], span)?.truthy() {
+                let hit = it.call_callback(&f, vec![item.clone()], span)?;
+                if it.expect_bool(&hit, span, &what)? {
                     return Ok(Some(item));
                 }
             }
@@ -269,7 +270,8 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
             let f = callable(it, a, 0, "function")?;
             let want_any = name == "any";
             for item in snapshot() {
-                if it.call_callback(&f, vec![item], span)?.truthy() == want_any {
+                let r = it.call_callback(&f, vec![item], span)?;
+                if it.expect_bool(&r, span, &what)? == want_any {
                     return Ok(Some(Value::Bool(want_any)));
                 }
             }
@@ -277,16 +279,17 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
         }
         "count" => {
             if a.pos.is_empty() {
-                Value::Num(l.borrow().len() as f64)
+                Value::Int(l.borrow().len() as i64)
             } else {
                 let f = callable(it, a, 0, "function")?;
-                let mut n = 0.0;
+                let mut n = 0;
                 for item in snapshot() {
-                    if it.call_callback(&f, vec![item], span)?.truthy() {
-                        n += 1.0;
+                    let r = it.call_callback(&f, vec![item], span)?;
+                    if it.expect_bool(&r, span, &what)? {
+                        n += 1;
                     }
                 }
-                Value::Num(n)
+                Value::Int(n)
             }
         }
         "sort" => {
@@ -295,7 +298,7 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
             items.sort_by(|x, y| compare_values(x, y).unwrap_or(Ordering::Equal));
             Value::list(items)
         }
-        "sort_by" => {
+        "sortBy" => {
             let f = callable(it, a, 0, "function")?;
             let mut pairs = Vec::new();
             for item in snapshot() {
@@ -310,24 +313,38 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
         "reverse" => Value::list(snapshot().into_iter().rev().collect()),
         "slice" => {
             let items = snapshot();
-            let (st, en) = bounds(items.len(), opt_num(it, a, 0, "start")?, opt_num(it, a, 1, "end")?);
+            let (st, en) = bounds(items.len(), opt_int(it, a, 0, "start")?, opt_int(it, a, 1, "end")?);
             Value::list(items[st..en].to_vec())
         }
         "sum" => {
+            let items = snapshot();
+            let mut int_total: Option<i64> = Some(0);
             let mut total = 0.0;
-            for (i, item) in l.borrow().iter().enumerate() {
+            for (i, item) in items.iter().enumerate() {
                 match item {
-                    Value::Num(n) => total += n,
+                    Value::Int(n) => {
+                        int_total = int_total.and_then(|t| t.checked_add(*n));
+                        total += *n as f64;
+                    }
+                    Value::Num(n) => {
+                        int_total = None;
+                        total += n;
+                    }
                     other => {
-                        return Err(it.error(
-                            format!("sum() needs a list of numbers, but item {i} is {}", with_article(&other.type_name())),
+                        return Err(it.err(
+                            "LIP5008",
+                            format!("sum() needs an Array of numbers, but item {i} is {}", with_article(&other.type_name())),
                             span,
                             None,
                         ))
                     }
                 }
             }
-            Value::Num(total)
+            let all_int = items.iter().all(|v| matches!(v, Value::Int(_)));
+            match int_total {
+                Some(t) if all_int => Value::Int(t),
+                _ => Value::Num(total),
+            }
         }
         "min" | "max" => {
             let items = snapshot();
@@ -338,7 +355,7 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
             });
             pick.unwrap_or(Value::Nil)
         }
-        "is_empty" => Value::Bool(l.borrow().is_empty()),
+        "isEmpty" => Value::Bool(l.borrow().is_empty()),
         "copy" => Value::list(snapshot()),
         "unique" => {
             let mut out: Vec<Value> = Vec::new();
@@ -363,16 +380,22 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
     }))
 }
 
-fn number_method(it: &mut Interpreter, n: f64, name: &str, a: &mut Args) -> Result<Option<Value>, Flow> {
-    Ok(Some(match name {
-        "round" => {
-            let factor = 10f64.powi(opt_num(it, a, 0, "digits")?.unwrap_or(0.0) as i32);
-            Value::Num((n * factor).round() / factor)
-        }
-        "floor" => Value::Num(n.floor()),
-        "ceil" => Value::Num(n.ceil()),
-        "abs" => Value::Num(n.abs()),
-        "to_string" => Value::string(format_number(n)),
+fn number_method(it: &mut Interpreter, n: &Value, name: &str, a: &mut Args) -> Result<Option<Value>, Flow> {
+    let x = n.as_f64().unwrap_or(0.0);
+    Ok(Some(match (name, n) {
+        ("round" | "floor" | "ceil", Value::Int(_)) if a.pos.is_empty() => n.clone(),
+        ("round", _) => match opt_int(it, a, 0, "digits")? {
+            None => whole(x.round()),
+            Some(d) => {
+                let factor = 10f64.powi(d as i32);
+                Value::Num((x * factor).round() / factor)
+            }
+        },
+        ("floor", _) => whole(x.floor()),
+        ("ceil", _) => whole(x.ceil()),
+        ("abs", Value::Int(i)) => Value::Int(i.checked_abs().ok_or_else(|| it.err("LIP5009", "this Integer calculation overflowed", a.span, None))?),
+        ("abs", _) => Value::Num(x.abs()),
+        ("toString", _) => Value::string(n.display()),
         _ => return Ok(None),
     }))
 }
@@ -381,9 +404,7 @@ fn object_method(it: &mut Interpreter, o: &Rc<ObjectData>, name: &str, a: &mut A
     Ok(Some(match name {
         "keys" => Value::list(o.fields.borrow().keys().map(|k| Value::text(k)).collect()),
         "values" => Value::list(o.fields.borrow().values().cloned().collect()),
-        "entries" => Value::list(
-            o.fields.borrow().iter().map(|(k, v)| Value::list(vec![Value::text(k), v.clone()])).collect(),
-        ),
+        "entries" => Value::list(o.fields.borrow().iter().map(|(k, v)| Value::list(vec![Value::text(k), v.clone()])).collect()),
         "has" => Value::Bool(o.fields.borrow().contains_key(&*text(it, a, 0, "key")?)),
         "get" => {
             let key = text(it, a, 0, "key")?;
@@ -393,13 +414,13 @@ fn object_method(it: &mut Interpreter, o: &Rc<ObjectData>, name: &str, a: &mut A
         "remove" => {
             let key = text(it, a, 0, "key")?;
             if o.ty.is_some() {
-                return Err(it.error("can't remove a field from a typed object", a.span, Some("Set it to nil instead.".into())));
+                return Err(it.err("LIP5008", "cannot remove a field from a typed Object", a.span, Some("Set it to null instead.".into())));
             }
             let removed = o.fields.borrow_mut().shift_remove(&*key);
             removed.unwrap_or(Value::Nil)
         }
-        "copy" => Value::Object(Rc::new(ObjectData { fields: RefCell::new(o.fields.borrow().clone()), ty: o.ty.clone(), module: None })),
-        "is_empty" => Value::Bool(o.fields.borrow().is_empty()),
+        "copy" => Value::Object(Rc::new(ObjectData { fields: RefCell::new(o.fields.borrow().clone()), ty: o.ty.clone(), module: None, tag: None, payload: None })),
+        "isEmpty" => Value::Bool(o.fields.borrow().is_empty()),
         _ => return Ok(None),
     }))
 }
@@ -413,7 +434,7 @@ fn task_method(it: &mut Interpreter, t: &Rc<RefCell<task::TaskState>>, name: &st
             }
             Value::Bool(running)
         }
-        "is_done" => Value::Bool(task::poll(it, t, a.span)),
+        "isDone" => Value::Bool(task::poll(it, t, a.span)),
         _ => return Ok(None),
     }))
 }

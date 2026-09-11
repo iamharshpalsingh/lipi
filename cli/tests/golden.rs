@@ -71,7 +71,7 @@ fn lipi_new_creates_a_runnable_project() {
     let project = tmp.join("demo");
     let (out, code) = run_lipi(&project, &["run"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("Hello, world!"), "{out}");
+    assert!(out.contains("Hello, LiPi!"), "{out}");
     let (out, code) = run_lipi(&project, &["test"]);
     assert_eq!(code, 0, "{out}");
     let _ = std::fs::remove_dir_all(&tmp);

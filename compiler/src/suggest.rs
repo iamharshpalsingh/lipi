@@ -1,4 +1,4 @@
-//! "Did you mean ...?" suggestions and hints for habits carried over from other languages.
+//! "did you mean ...?" suggestions and hints for habits carried over from other languages.
 
 /// Levenshtein edit distance, used to suggest similarly spelled names.
 pub fn edit_distance(a: &str, b: &str) -> usize {
@@ -17,6 +17,23 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+/// `to_number` → `toNumber`
+pub fn to_camel(s: &str) -> String {
+    let mut out = String::new();
+    let mut upper = false;
+    for c in s.chars() {
+        if c == '_' && !out.is_empty() {
+            upper = true;
+        } else if upper {
+            out.extend(c.to_uppercase());
+            upper = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// The closest candidate to `name`, if it is close enough to be a plausible typo.
 pub fn closest<'a>(name: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
     let limit = match name.chars().count() {
@@ -25,38 +42,48 @@ pub fn closest<'a>(name: &str, candidates: impl IntoIterator<Item = &'a str>) ->
         _ => 3,
     };
     let lower = name.to_lowercase();
-    candidates
-        .into_iter()
-        .filter(|c| *c != name)
-        .map(|c| {
-            let d = if c.to_lowercase() == lower { 0 } else { edit_distance(name, c) };
-            (d, c)
-        })
-        .filter(|(d, _)| *d <= limit)
-        .min_by_key(|(d, _)| *d)
-        .map(|(_, c)| c)
+    let camel = to_camel(name);
+    let mut best: Option<(usize, &'a str)> = None;
+    for c in candidates {
+        if c == name {
+            continue;
+        }
+        let d = if c == camel || c.to_lowercase() == lower { 0 } else { edit_distance(name, c) };
+        if d <= limit && best.is_none_or(|(bd, bc)| d < bd || (d == bd && c < bc)) {
+            best = Some((d, c));
+        }
+    }
+    best.map(|(_, c)| c)
+}
+
+/// `did you mean "x"?` for the closest candidate.
+pub fn did_you_mean<'a>(name: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    closest(name, candidates).map(|c| {
+        if c == to_camel(name) && name.contains('_') {
+            format!("did you mean \"{c}\"? LiPi names use camelCase.")
+        } else {
+            format!("did you mean \"{c}\"?")
+        }
+    })
 }
 
 /// Hints for names that come from other languages.
 pub fn foreign_name_hint(name: &str) -> Option<&'static str> {
     Some(match name {
-        "print" | "println" | "console" | "puts" | "echo" | "printf" => {
-            "To print something in Lipi, write: show \"Hello\""
+        "print" | "println" | "console" | "puts" | "echo" | "printf" => "To print something in LiPi, write: show \"Hello\"",
+        "nil" | "None" | "undefined" | "NULL" | "Null" => "LiPi calls the empty value null.",
+        "True" | "TRUE" => "Booleans in LiPi are lowercase: true",
+        "False" | "FALSE" => "Booleans in LiPi are lowercase: false",
+        "let" | "var" => "LiPi doesn't need let/var. Just write: name = value",
+        "def" | "fn" | "func" => {
+            "Define a function with `function add(a, b)` or just `add(a, b)`, followed by an indented body."
         }
-        "null" | "None" | "undefined" | "NULL" => "Lipi calls the empty value `nil`.",
-        "True" | "TRUE" => "Booleans in Lipi are lowercase: true",
-        "False" | "FALSE" => "Booleans in Lipi are lowercase: false",
-        "let" | "var" | "const_" => "Lipi doesn't need let/var. Just write: name = value",
-        "function" | "def" | "fn" | "func" => {
-            "Define a function by writing its name and parameters, then an indented body:\n    add(a, b)\n        return a + b"
-        }
-        "elif" | "elsif" | "elseif" => "Write `else if` in Lipi.",
-        "len" | "length" | "size" => "Use the .length property, for example: items.length",
-        "str" | "String" => "Use to_string(value) to convert something to text.",
-        "int" | "float" | "parseInt" | "parseFloat" | "Number" => {
-            "Use to_number(value) to convert text to a number."
-        }
-        "this" => "Inside a type's methods, Lipi calls the current object `self`.",
+        "elif" | "elsif" | "elseif" => "Write `else if` in LiPi.",
+        "len" | "size" => "Use the .length property, for example: items.length",
+        "str" => "Use toString(value) to convert something to text.",
+        "int" | "float" | "parseInt" | "parseFloat" => "Use toNumber(value), toInteger(value) or toDecimal(value).",
+        "this" => "Inside a type's methods, LiPi calls the current object self.",
+        "import" | "require" | "include" => "LiPi loads modules with use, for example: use math",
         _ => return None,
     })
 }

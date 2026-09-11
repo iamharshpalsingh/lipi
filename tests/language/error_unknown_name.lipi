@@ -1,2 +1,2 @@
-name = "Dezy"
-show nmae
+user = {name: "Dezy"}
+show usr.name

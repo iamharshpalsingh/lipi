@@ -27,7 +27,7 @@ pub struct Stmt {
 pub enum StmtKind {
     Expr(Expr),
     Show(Vec<Expr>),
-    /// `x = 1`, `x += 1`, `name: string = "x"`, `const PI = 3.14`, `user.name = "x"`
+    /// `x = 1`, `x += 1`, `name: String = "x"`, `const appName = "LiPi"`, `user.name = "x"`
     Assign { target: Target, op: Option<BinOp>, ty: Option<TypeExpr>, value: Expr, constant: bool },
     If { branches: Vec<(Expr, Block)>, otherwise: Option<Block> },
     While { cond: Expr, body: Block },
@@ -41,8 +41,10 @@ pub enum StmtKind {
     Throw(Expr),
     Try { body: Block, catch: Option<(Option<Name>, Block)>, finally: Option<Block> },
     Match { subject: Expr, arms: Vec<MatchArm>, otherwise: Option<Block> },
-    /// `import "./math.lipi"`, `import "./math.lipi" as m`, `from "./math.lipi" import add, sub`
-    Import { source: String, alias: Option<Name>, names: Option<Vec<Name>> },
+    /// `use math`, `use "./helpers.lipi" as h`, `from math use add, sub`
+    Use { source: String, alias: Option<Name>, names: Option<Vec<Name>> },
+    /// `export add, sub` or `export <definition>`
+    Export { names: Vec<Name>, inner: Option<Box<Stmt>> },
     TypeDef(Rc<TypeDecl>),
     Test { name: String, body: Block },
 }
@@ -75,6 +77,7 @@ pub struct FuncDecl {
     pub ret: Option<TypeExpr>,
     pub body: Block,
     pub is_async: bool,
+    /// Lambdas (`x => x * 2`) and trailing blocks: they inherit their surroundings' async context.
     pub is_lambda: bool,
     pub span: Span,
 }
@@ -110,7 +113,7 @@ impl fmt::Display for TypeExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
             TypeKind::Named(n) => write!(f, "{n}"),
-            TypeKind::List(inner) => write!(f, "list[{inner}]"),
+            TypeKind::List(inner) => write!(f, "Array[{inner}]"),
             TypeKind::Optional(inner) => write!(f, "{inner}?"),
         }
     }
@@ -124,11 +127,12 @@ pub struct Expr {
 
 #[derive(Debug, Clone)]
 pub enum ExprKind {
-    Number(f64),
+    Int(i64),
+    Decimal(f64),
     Str(String),
     Template(Vec<TemplatePart>),
     Bool(bool),
-    Nil,
+    Null,
     Ident(String),
     List(Vec<Expr>),
     Object(Vec<(Name, Expr)>),
@@ -136,7 +140,7 @@ pub enum ExprKind {
     Binary(BinOp, Box<Expr>, Box<Expr>),
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
-    /// `a ?? b` — `a` unless it is nil
+    /// `a ?? b` — `a` unless it is null
     Coalesce(Box<Expr>, Box<Expr>),
     /// `"adult" if age >= 18 else "minor"`
     IfElse { cond: Box<Expr>, then: Box<Expr>, otherwise: Box<Expr> },

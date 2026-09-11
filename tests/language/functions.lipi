@@ -4,10 +4,16 @@ add(a, b)
 
 show add(2, 3)
 
+# The optional `function` keyword works too
+function multiply(a, b)
+    return a * b
+
+show multiply(6, 7)
+
 # Functions can be used before they are defined
 show square(9)
 
-square(x: number) -> number
+square(x: Integer) -> Integer
     return x * x
 
 greet(name = "friend", greeting = "Hello")
@@ -17,14 +23,14 @@ show greet()
 show greet("Asha")
 show greet(greeting: "Namaste", name: "Ravi")
 
-make_counter()
+makeCounter()
     count = 0
     increment()
-        count += 1
+        count = count + 1
         return count
     return increment
 
-counter = make_counter()
+counter = makeCounter()
 counter()
 counter()
 show "counter:", counter()
@@ -34,7 +40,7 @@ factorial(n)
         return 1
     return n * factorial(n - 1)
 
-show factorial(10)
+show factorial(20)
 
 fib(n)
     if n < 2
@@ -59,7 +65,7 @@ apply(f, value)
     return f(value)
 
 show apply(double, 5)
-show apply(to_string, 5) + "!"
+show apply(toString, 5) + "!"
 
 nothing()
     show "no return value"

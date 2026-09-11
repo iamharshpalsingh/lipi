@@ -1,7 +1,7 @@
 # Variables, numbers, strings, booleans and show
 name = "Dezy"
 age = 25
-show "Hello World"
+show "Hello, LiPi!"
 show name, age
 show "Name: {name}, next year: {age + 1}"
 
@@ -10,18 +10,21 @@ if age >= 18
 else
     show "Minor"
 
+# Integers and Decimals: / always gives a Decimal
 show 7 / 2, 7 % 3, -7 % 3, 2 ** 10
+show 10 / 2, 10 / 4 * 2, 2.5 * 2, 1_000_000 * 3
 show 0.1 + 0.2
-show 10 / 4 * 2
+show typeOf(10), typeOf(10.5), typeOf(10 / 2), typeOf(null)
 show "abc" + "def"
 show true and false, true or false, not true
-show nil ?? "fallback"
+show null ?? "fallback"
 show 3 == 3.0, [1, 2] == [1, 2], {a: 1} == {a: 1}
 show "x" in ["x", "y"], "ell" in "hello", 5 not in [1, 2]
 
-const PI = 3.14159
-radius: number = 2
-show "Area: {(PI * radius ** 2).round(2)}"
+const appName = "LiPi"
+radius: Decimal = 2.0
+show "Area: {(math.pi * radius ** 2).round(2)}"
+show appName
 
 price = 100
 price += 50
@@ -34,4 +37,4 @@ Line one
 Line two with {name}
 """
 show multi.trim()
-show "tab\there", "quote \"x\"", "brace \{not code\}"
+show "tab\there", "quote \"x\"", "brace \{not code\}", 'single {quotes} stay literal'

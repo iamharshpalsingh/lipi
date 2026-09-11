@@ -1,19 +1,19 @@
 [1, 2, 3, 4] 4 1 4 4
 4 [100, 2, 3]
-true 2 nil
+true 2 null
 ["start", 100, 2, 3] start [2, 3]
 [3, 2, 100] 100-2-3 [1, 2, 3]
-Dezy blue nil
+Dezy blue null
 {name: "Dezy", age: 26, "favorite color": "blue", email: "dezy@example.com"}
 ["name", "age", "favorite color", "email"] true none 4
 dezy@example.com ["name", "age", "favorite color"]
 B
-nil
+null
 {the: 2, cat: 1, and: 1, hat: 1}
-Hello, Lipi! hello, lipi! 16
+Hello, LiPi! hello, lipi! 16
 ["a", "b", "c"] ["l", "i", "p", "i"] ipil
 heLLo true el
 007 ---------- 2
-43 nil 3.5!
+43 null 3.5! 7 2.0
 ["Arjun", "Zoya"]
 [1, 2, 3, 4, 5] [1, 2, 3]

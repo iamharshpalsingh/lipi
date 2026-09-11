@@ -1,4 +1,6 @@
 /target
+*.db
+todos.json
 **/*.rs.bk
 **/scratchpad
 **/.claude

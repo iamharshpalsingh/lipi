@@ -1,8 +1,10 @@
-//! Lexer: turns Lipi source text into tokens.
+//! Lexer: turns LiPi source text into tokens.
 //!
-//! Lipi uses indentation for blocks, so the lexer emits `Indent` / `Dedent`
-//! tokens (like Python). Newlines inside brackets are ignored, and a line that
-//! starts with `.` continues the previous line (for method chains).
+//! LiPi uses indentation for blocks, so the lexer emits `Indent` / `Dedent`
+//! tokens. Newlines inside brackets are ignored, and a line that starts with
+//! `.` continues the previous line (for method chains).
+//!
+//! v0.1 identifiers are ASCII: letters, digits and `_`, not starting with a digit.
 
 use crate::diagnostics::{Diagnostic, Span};
 
@@ -22,9 +24,13 @@ pub enum Kw {
     Not,
     True,
     False,
-    Nil,
+    Null,
     Const,
-    Import,
+    Use,
+    From,
+    As,
+    Export,
+    Function,
     Async,
     Await,
     Try,
@@ -35,66 +41,45 @@ pub enum Kw {
     Show,
 }
 
+const KEYWORDS: &[(&str, Kw)] = &[
+    ("if", Kw::If),
+    ("else", Kw::Else),
+    ("for", Kw::For),
+    ("in", Kw::In),
+    ("while", Kw::While),
+    ("repeat", Kw::Repeat),
+    ("break", Kw::Break),
+    ("continue", Kw::Continue),
+    ("return", Kw::Return),
+    ("and", Kw::And),
+    ("or", Kw::Or),
+    ("not", Kw::Not),
+    ("true", Kw::True),
+    ("false", Kw::False),
+    ("null", Kw::Null),
+    ("const", Kw::Const),
+    ("use", Kw::Use),
+    ("from", Kw::From),
+    ("as", Kw::As),
+    ("export", Kw::Export),
+    ("function", Kw::Function),
+    ("async", Kw::Async),
+    ("await", Kw::Await),
+    ("try", Kw::Try),
+    ("catch", Kw::Catch),
+    ("finally", Kw::Finally),
+    ("throw", Kw::Throw),
+    ("match", Kw::Match),
+    ("show", Kw::Show),
+];
+
 impl Kw {
     pub fn lookup(s: &str) -> Option<Kw> {
-        Some(match s {
-            "if" => Kw::If,
-            "else" => Kw::Else,
-            "for" => Kw::For,
-            "in" => Kw::In,
-            "while" => Kw::While,
-            "repeat" => Kw::Repeat,
-            "break" => Kw::Break,
-            "continue" => Kw::Continue,
-            "return" => Kw::Return,
-            "and" => Kw::And,
-            "or" => Kw::Or,
-            "not" => Kw::Not,
-            "true" => Kw::True,
-            "false" => Kw::False,
-            "nil" => Kw::Nil,
-            "const" => Kw::Const,
-            "import" => Kw::Import,
-            "async" => Kw::Async,
-            "await" => Kw::Await,
-            "try" => Kw::Try,
-            "catch" => Kw::Catch,
-            "finally" => Kw::Finally,
-            "throw" => Kw::Throw,
-            "match" => Kw::Match,
-            "show" => Kw::Show,
-            _ => return None,
-        })
+        KEYWORDS.iter().find(|(k, _)| *k == s).map(|(_, kw)| *kw)
     }
 
     pub fn as_str(self) -> &'static str {
-        match self {
-            Kw::If => "if",
-            Kw::Else => "else",
-            Kw::For => "for",
-            Kw::In => "in",
-            Kw::While => "while",
-            Kw::Repeat => "repeat",
-            Kw::Break => "break",
-            Kw::Continue => "continue",
-            Kw::Return => "return",
-            Kw::And => "and",
-            Kw::Or => "or",
-            Kw::Not => "not",
-            Kw::True => "true",
-            Kw::False => "false",
-            Kw::Nil => "nil",
-            Kw::Const => "const",
-            Kw::Import => "import",
-            Kw::Async => "async",
-            Kw::Await => "await",
-            Kw::Try => "try",
-            Kw::Catch => "catch",
-            Kw::Finally => "finally",
-            Kw::Throw => "throw",
-            Kw::Match => "match",
-            Kw::Show => "show",
-        }
+        KEYWORDS.iter().find(|(_, kw)| *kw == self).map(|(k, _)| *k).unwrap_or("?")
     }
 }
 
@@ -108,7 +93,8 @@ pub enum StrPart {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
-    Number(f64),
+    Int(i64),
+    Decimal(f64),
     Str(Vec<StrPart>),
     Ident(String),
     Kw(Kw),
@@ -153,10 +139,11 @@ impl Tok {
     /// How the token is described in error messages.
     pub fn describe(&self) -> String {
         let sym = match self {
-            Tok::Number(n) => return format!("the number {n}"),
+            Tok::Int(n) => return format!("the number {n}"),
+            Tok::Decimal(n) => return format!("the number {n}"),
             Tok::Str(_) => return "a string".into(),
-            Tok::Ident(name) => return format!("'{name}'"),
-            Tok::Kw(k) => return format!("the keyword '{}'", k.as_str()),
+            Tok::Ident(name) => return format!("\"{name}\""),
+            Tok::Kw(k) => return format!("the keyword \"{}\"", k.as_str()),
             Tok::Newline => return "the end of the line".into(),
             Tok::Indent => return "an indented line".into(),
             Tok::Dedent => return "the end of the block".into(),
@@ -220,7 +207,7 @@ pub struct Lexer<'a> {
 }
 
 pub fn is_ident_start(c: char) -> bool {
-    c == '_' || c.is_alphabetic() || (c as u32 > 0x7f && !c.is_whitespace() && !is_curly_quote(c))
+    c == '_' || c.is_ascii_alphabetic()
 }
 
 fn is_ident_continue(c: char) -> bool {
@@ -341,6 +328,12 @@ impl<'a> Lexer<'a> {
                 '0'..='9' => self.number(start)?,
                 '"' | '\'' => self.string(start, c)?,
                 c if is_ident_start(c) => self.ident(start),
+                c if c.is_alphabetic() => {
+                    self.bump();
+                    return Err(Diagnostic::error(format!("names can only use ASCII letters, digits and _ (found '{c}')"), self.span_from(start))
+                        .with_code("LIP0004")
+                        .with_hint("Non-English letters work inside strings and comments. Unicode names may come in a later LiPi version."));
+                }
                 _ => self.operator(start, c)?,
             }
         }
@@ -351,6 +344,7 @@ impl<'a> Lexer<'a> {
                 _ => '}',
             };
             return Err(Diagnostic::error(format!("this '{open}' is never closed"), *span)
+                .with_code("LIP0001")
                 .with_hint(format!("Add a matching '{close}'.")));
         }
         let start = self.here();
@@ -404,7 +398,8 @@ impl<'a> Lexer<'a> {
                     "this line's indentation doesn't line up with any block above it",
                     Span::new(start.0, start.0 + 1, start.1, start.2),
                 )
-                .with_hint("Use the same number of spaces as the line you want to line up with. Lipi uses 4 spaces per level."));
+                .with_code("LIP0002")
+                .with_hint("Use the same number of spaces as the line you want to line up with. LiPi uses 4 spaces per level."));
             }
         }
         Ok(())
@@ -423,14 +418,16 @@ impl<'a> Lexer<'a> {
                 }
                 self.bump();
             }
-            let value = u64::from_str_radix(&text, 16).map_err(|_| {
-                Diagnostic::error("this hexadecimal number is not valid", self.span_from(start))
+            let value = i64::from_str_radix(&text, 16).map_err(|_| {
+                Diagnostic::error("this hexadecimal number is not valid", self.span_from(start)).with_code("LIP0007")
             })?;
-            self.push(Tok::Number(value as f64), start);
+            self.push(Tok::Int(value), start);
             return Ok(());
         }
+        let mut decimal = false;
         self.digits(&mut text);
         if self.peek() == Some('.') && matches!(self.peek_n(1), Some('0'..='9')) {
+            decimal = true;
             text.push('.');
             self.bump();
             self.digits(&mut text);
@@ -440,6 +437,7 @@ impl<'a> Lexer<'a> {
             let after = self.peek_n(2);
             let signed = matches!(next, Some('+' | '-')) && matches!(after, Some('0'..='9'));
             if matches!(next, Some('0'..='9')) || signed {
+                decimal = true;
                 text.push('e');
                 self.bump();
                 if signed {
@@ -452,13 +450,20 @@ impl<'a> Lexer<'a> {
             if is_ident_start(c) {
                 let span = self.span_from(start);
                 return Err(Diagnostic::error(format!("a number can't be followed directly by '{c}'"), span)
+                    .with_code("LIP0007")
                     .with_hint(format!("Did you mean {text} * {c}...? Put an operator between a number and a name.")));
             }
         }
-        let value: f64 = text
-            .parse()
-            .map_err(|_| Diagnostic::error("this number is not valid", self.span_from(start)))?;
-        self.push(Tok::Number(value), start);
+        let tok = if decimal {
+            Tok::Decimal(text.parse().map_err(|_| Diagnostic::error("this number is not valid", self.span_from(start)).with_code("LIP0007"))?)
+        } else {
+            Tok::Int(text.parse().map_err(|_| {
+                Diagnostic::error("this Integer is too big", self.span_from(start))
+                    .with_code("LIP0007")
+                    .with_hint("Integers go up to 9223372036854775807. For bigger values, write a Decimal such as 1e20.")
+            })?)
+        };
+        self.push(tok, start);
         Ok(())
     }
 
@@ -481,12 +486,12 @@ impl<'a> Lexer<'a> {
         if triple {
             self.bump();
             self.bump();
-            // A newline right after the opening """ is not part of the text.
+            // A newline right after the opening quotes is not part of the text.
             self.eat('\r');
             self.eat('\n');
         }
         let unterminated = |lexer: &Lexer| {
-            Diagnostic::error("this string never ends", lexer.span_from(start)).with_hint(if triple {
+            Diagnostic::error("this string never ends", lexer.span_from(start)).with_code("LIP0003").with_hint(if triple {
                 format!("Add {quote}{quote}{quote} where the text should end.")
             } else {
                 format!("Add a closing {quote} at the end of the text. For text over several lines, use {quote}{quote}{quote}.")
@@ -538,12 +543,14 @@ impl<'a> Lexer<'a> {
                             (true, Some(ch)) => lit.push(ch),
                             _ => {
                                 return Err(Diagnostic::error("this unicode escape is not valid", self.span_from(esc_start))
+                                    .with_code("LIP0003")
                                     .with_hint("Write unicode characters like \\u{1F600}."))
                             }
                         }
                     }
                     _ => {
                         return Err(Diagnostic::error(format!("unknown escape '\\{e}' in string"), self.span_from(esc_start))
+                            .with_code("LIP0003")
                             .with_hint("Known escapes: \\n (new line), \\t (tab), \\\\ (backslash), \\\" (quote), \\{ (brace)."))
                     }
                 }
@@ -557,6 +564,7 @@ impl<'a> Lexer<'a> {
                 loop {
                     let Some(c) = self.peek() else {
                         return Err(Diagnostic::error("this '{' in the string is never closed", self.span_from(brace))
+                            .with_code("LIP0003")
                             .with_hint("Close the expression with '}', or write \\{ for a literal brace."));
                     };
                     if let Some(q) = inner_quote {
@@ -586,6 +594,7 @@ impl<'a> Lexer<'a> {
                 self.bump(); // closing }
                 if self.src[code.start..code.end].trim().is_empty() {
                     return Err(Diagnostic::error("empty {} in a string", self.span_from(brace))
+                        .with_code("LIP0003")
                         .with_hint("Put a value inside, like \"Hello {name}\", or write \\{ for a literal brace."));
                 }
                 if !lit.is_empty() {
@@ -621,8 +630,8 @@ impl<'a> Lexer<'a> {
 
     fn operator(&mut self, start: Pos, c: char) -> Result<(), Diagnostic> {
         self.bump();
-        let err = |lexer: &Lexer, msg: &str, hint: &str| {
-            Err(Diagnostic::error(msg, lexer.span_from(start)).with_hint(hint))
+        let habit = |lexer: &Lexer, msg: &str, hint: &str| {
+            Err(Diagnostic::error(msg, lexer.span_from(start)).with_code("LIP0008").with_hint(hint))
         };
         let tok = match c {
             '+' => {
@@ -630,7 +639,7 @@ impl<'a> Lexer<'a> {
                     Tok::PlusAssign
                 } else if self.peek() == Some('+') {
                     self.bump();
-                    return err(self, "Lipi doesn't have '++'", "To add one, write: count += 1");
+                    return habit(self, "LiPi doesn't have '++'", "To add one, write: count += 1");
                 } else {
                     Tok::Plus
                 }
@@ -642,7 +651,7 @@ impl<'a> Lexer<'a> {
                     Tok::Arrow
                 } else if self.peek() == Some('-') {
                     self.bump();
-                    return err(self, "Lipi doesn't have '--'", "To subtract one, write: count -= 1");
+                    return habit(self, "LiPi doesn't have '--'", "To subtract one, write: count -= 1");
                 } else {
                     Tok::Minus
                 }
@@ -661,7 +670,7 @@ impl<'a> Lexer<'a> {
                     Tok::SlashAssign
                 } else if self.peek() == Some('/') || self.peek() == Some('*') {
                     self.bump();
-                    return err(self, "comments in Lipi start with #", "Write: # this is a comment");
+                    return habit(self, "comments in LiPi start with #", "Write: # this is a comment");
                 } else {
                     Tok::Slash
                 }
@@ -670,7 +679,7 @@ impl<'a> Lexer<'a> {
             '=' => {
                 if self.eat('=') {
                     if self.eat('=') {
-                        return err(self, "Lipi doesn't have '==='", "Use == to compare. It never converts types behind your back.");
+                        return habit(self, "LiPi doesn't have '==='", "Use == to compare. It never converts types behind your back.");
                     }
                     Tok::Eq
                 } else if self.eat('>') {
@@ -683,7 +692,7 @@ impl<'a> Lexer<'a> {
                 if self.eat('=') {
                     Tok::NotEq
                 } else {
-                    return err(self, "Lipi uses the word `not` instead of '!'", "Write: if not done");
+                    return habit(self, "LiPi uses the word `not` instead of '!'", "Write: if not done");
                 }
             }
             '<' => {
@@ -724,10 +733,13 @@ impl<'a> Lexer<'a> {
                             _ => '}',
                         };
                         return Err(Diagnostic::error(format!("found '{c}' but the '{open}' opened earlier needs '{want}'"), self.span_from(start))
+                            .with_code("LIP0001")
                             .with_hint(format!("The '{open}' was opened on line {}.", span.line)));
                     }
                     None => {
-                        return err(self, &format!("this '{c}' doesn't close anything"), "Remove it, or add the matching opening bracket.");
+                        return Err(Diagnostic::error(format!("this '{c}' doesn't close anything"), self.span_from(start))
+                            .with_code("LIP0001")
+                            .with_hint("Remove it, or add the matching opening bracket."));
                     }
                 }
                 match c {
@@ -750,17 +762,23 @@ impl<'a> Lexer<'a> {
             }
             '&' => {
                 self.eat('&');
-                return err(self, "Lipi uses the word `and` instead of '&&'", "Write: if ready and valid");
+                return habit(self, "LiPi uses the word `and` instead of '&&'", "Write: if ready and valid");
             }
             '|' => {
                 self.eat('|');
-                return err(self, "Lipi uses the word `or` instead of '||'", "Write: if empty or broken");
+                return habit(self, "LiPi uses the word `or` instead of '||'", "Write: if empty or broken");
             }
-            ';' => return err(self, "Lipi doesn't use semicolons", "Put each statement on its own line."),
+            ';' => return habit(self, "LiPi doesn't use semicolons", "Put each statement on its own line."),
             c if is_curly_quote(c) => {
-                return err(self, "this is a curly quote", "Use straight quotes (\") instead. Word processors often replace them with curly ones.");
+                return Err(Diagnostic::error("this is a curly quote", self.span_from(start))
+                    .with_code("LIP0004")
+                    .with_hint("Use straight quotes (\") instead. Word processors often replace them with curly ones."));
             }
-            _ => return err(self, &format!("I don't understand the character '{c}'"), "Remove it, or put it inside a string."),
+            _ => {
+                return Err(Diagnostic::error(format!("I don't understand the character '{c}'"), self.span_from(start))
+                    .with_code("LIP0004")
+                    .with_hint("Remove it, or put it inside a string."))
+            }
         };
         self.push(tok, start);
         Ok(())
@@ -811,8 +829,8 @@ mod tests {
     }
 
     #[test]
-    fn numbers() {
-        assert_eq!(kinds("1_000 2.5 1e3 0xff")[..4], [Tok::Number(1000.0), Tok::Number(2.5), Tok::Number(1000.0), Tok::Number(255.0)]);
+    fn integers_and_decimals() {
+        assert_eq!(kinds("1_000 2.5 1e3 0xff")[..4], [Tok::Int(1000), Tok::Decimal(2.5), Tok::Decimal(1000.0), Tok::Int(255)]);
     }
 
     #[test]
@@ -826,10 +844,12 @@ mod tests {
     #[test]
     fn helpful_errors() {
         let e = Lexer::new("x = \"abc").tokenize().unwrap_err();
-        assert!(e.message.contains("never ends"));
+        assert_eq!(e.code, Some("LIP0003"));
         let e = Lexer::new("a && b").tokenize().unwrap_err();
         assert!(e.message.contains("and"));
         let e = Lexer::new("if a\n        b\n    c\n").tokenize().unwrap_err();
-        assert!(e.message.contains("indentation"));
+        assert_eq!(e.code, Some("LIP0002"));
+        let e = Lexer::new("नाम = 1").tokenize().unwrap_err();
+        assert_eq!(e.code, Some("LIP0004"));
     }
 }

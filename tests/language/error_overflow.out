@@ -1,0 +1,7 @@
+ERROR LIP5009: this Integer calculation overflowed
+
+tests/language/error_overflow.lipi:2:6
+    show big + 1
+         ^^^^^^^
+
+Hint: Integers go up to 9223372036854775807. For bigger values, use Decimals (for example 1.0 * x).

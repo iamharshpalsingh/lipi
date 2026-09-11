@@ -3,9 +3,13 @@ resolver = "2"
 members = ["compiler", "runtime", "cli"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [profile.release]
 opt-level = 3
 lto = "thin"
+
+# Optimise dependencies even in debug builds, so hashing and SQLite stay fast.
+[profile.dev.package."*"]
+opt-level = 2

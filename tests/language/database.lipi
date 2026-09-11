@@ -1,0 +1,48 @@
+# Database layer (SQLite in memory, so the test repeats exactly)
+db = database.open(":memory:")
+
+dezy = db.users.create({name: "Dezy", age: 25, active: true, tags: ["admin"]})
+db.users.create({name: "Asha", age: 31, active: false, tags: []})
+db.users.create({name: "Ravi", age: 19, active: true})
+show dezy
+show db.users.count(), db.users.count(active: true)
+show db.users.find(2).name, db.users.find(name: "Ravi").age, db.users.find(99)
+show db.users.where(active: true, order: "-age").map(u => u.name)
+show db.users.all(order: "name", limit: 2).map(u => u.name)
+show db.users.find(1).tags, typeOf(db.users.find(1).active)
+
+updated = db.users.update(2, {active: true, city: "Pune"})
+show updated.active, updated.city
+show db.users.delete(3), db.users.delete(3), db.users.count()
+
+# Raw SQL, always with parameters
+rows = db.query("SELECT name, age FROM users WHERE age > ? ORDER BY age", [20])
+show rows
+result = db.run("UPDATE users SET age = age + 1 WHERE name = :name", {name: "Dezy"})
+show result.changes, db.users.find(1).age
+
+# A transaction rolls back when its block fails
+failingWork(tx)
+    tx.users.create({name: "Temp", age: 1})
+    throw "something failed"
+
+try
+    db.transaction(failingWork)
+catch err
+    show "rolled back:", err.message
+show db.users.count()
+
+# Migrations run once
+show db.migrate("001_products", "CREATE TABLE products (id INTEGER PRIMARY KEY, title TEXT NOT NULL, price REAL)")
+show db.migrate("001_products", "CREATE TABLE products (id INTEGER PRIMARY KEY)")
+db.products.create({title: "Tea", price: 2.5})
+show db.products.all(), db.tables()
+
+# Tables that don't exist yet are simply empty
+show db.orders.all(), db.orders.count(), db.orders.find(1)
+
+# SQL mistakes are ordinary LiPi errors
+try
+    db.query("SELEC nonsense")
+catch err
+    show err.code, err.category

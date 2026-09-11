@@ -1,8 +1,8 @@
-# Types with fields and methods, and list operations on them.
+# Types with fields and methods, and Array operations on them.
 
 type Rectangle
-    width: number
-    height: number
+    width: Number
+    height: Number
 
     area()
         return self.width * self.height
@@ -11,7 +11,7 @@ type Rectangle
         return "rectangle {self.width}x{self.height}"
 
 type Circle
-    radius: number
+    radius: Number
 
     area()
         return math.pi * self.radius ** 2
@@ -21,11 +21,11 @@ type Circle
 
 shapes = [Rectangle(3, 4), Circle(radius: 1), Rectangle(width: 10, height: 2), Circle(2.5)]
 
-for shape in shapes.sort_by(s => s.area())
+for shape in shapes.sortBy(s => s.area())
     show "{shape.describe()}: area {shape.area().round(2)}"
 
 total = shapes.map(s => s.area()).sum()
 show "Total area: {total.round(2)}"
 
-biggest = shapes.sort_by(s => s.area()).last
-show "Biggest: {biggest.describe()}"
+biggest = shapes.sortBy(s => s.area()).last
+show "Biggest: " + biggest.describe()

@@ -10,12 +10,12 @@ use std::path::{Path, PathBuf};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const HELP: &str = "\
-Lipi — easy to start, hard to outgrow.
+LiPi — Unified Development Language. Easy to start. Hard to outgrow.
 
 Usage:
   lipi <file.lipi> [args]   Run a program
   lipi run [file] [args]    Run a program (default: the project's main file)
-  lipi check [file]         Find mistakes without running
+  lipi check [file] [--json]  Find mistakes without running (--json for editors and CI)
   lipi test [path]          Run test blocks in *_test.lipi files
   lipi new <name>           Create a new project
   lipi repl                 Start the interactive prompt (also: just `lipi`)
@@ -97,8 +97,8 @@ fn run(args: Vec<String>) -> i32 {
 fn run_program(path: &Path, script_args: &[String]) -> i32 {
     let mut it = Interpreter::new();
     it.set_script_args(script_args);
-    match it.run_file(path) {
-        Ok(_) => 0,
+    match it.run_file(path).and_then(|_| it.serve(color())) {
+        Ok(()) => 0,
         Err(RunError::Exit(code)) => code,
         Err(e) => {
             eprint!("{}", it.render(&e, color()));
@@ -107,7 +107,7 @@ fn run_program(path: &Path, script_args: &[String]) -> i32 {
     }
 }
 
-/// The project's main file: `main` in lipi.json, or main.lipi.
+/// The project's main file: `main` in lipi.json, else src/main.lipi or main.lipi.
 fn project_entry() -> Option<PathBuf> {
     if let Ok(text) = std::fs::read_to_string("lipi.json") {
         if let Ok(serde_json::Value::Object(m)) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -116,8 +116,7 @@ fn project_entry() -> Option<PathBuf> {
             }
         }
     }
-    let default = PathBuf::from("main.lipi");
-    default.is_file().then_some(default)
+    ["src/main.lipi", "main.lipi"].into_iter().map(PathBuf::from).find(|p| p.is_file())
 }
 
 fn file_or_entry(args: &[String]) -> Result<(PathBuf, Vec<String>), i32> {
@@ -142,12 +141,40 @@ fn cmd_run(args: &[String]) -> i32 {
 }
 
 fn cmd_check(args: &[String]) -> i32 {
-    let (file, _) = match file_or_entry(args) {
+    let json = args.iter().any(|a| a == "--json");
+    let rest: Vec<String> = args.iter().filter(|a| *a != "--json").cloned().collect();
+    let (file, _) = match file_or_entry(&rest) {
         Ok(v) => v,
         Err(code) => return code,
     };
     let mut it = Interpreter::new();
-    match it.check_file(&file) {
+    let result = it.check_file(&file);
+    if json {
+        let diags: Vec<(lipi_compiler::Diagnostic, String)> = match &result {
+            Err(RunError::Syntax(d, f)) => vec![(d.clone(), f.to_string())],
+            Err(RunError::Check(ds, f)) => ds.iter().map(|d| (d.clone(), f.to_string())).collect(),
+            _ => Vec::new(),
+        };
+        let items: Vec<serde_json::Value> = diags
+            .iter()
+            .map(|(d, f)| {
+                serde_json::json!({
+                    "code": d.code,
+                    "severity": if d.severity == lipi_compiler::Severity::Error { "error" } else { "warning" },
+                    "category": d.category(),
+                    "message": d.message,
+                    "file": f,
+                    "line": d.span.map(|s| s.line),
+                    "column": d.span.map(|s| s.col),
+                    "length": d.span.map(|s| s.end - s.start),
+                    "hint": d.hint,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&items).unwrap_or_else(|_| "[]".into()));
+        return if items.is_empty() { 0 } else { 1 };
+    }
+    match result {
         Ok(()) => {
             println!("No problems found in {}", file.display());
             0
@@ -185,7 +212,7 @@ fn cmd_test(args: &[String]) -> i32 {
     }
     if files.is_empty() {
         eprintln!("No test files found in {}.", target.display());
-        eprintln!("Test files end in _test.lipi and contain blocks like:\n    test \"adds numbers\"\n        assert_equal(1 + 1, 2)");
+        eprintln!("Test files end in _test.lipi and contain blocks like:\n    test \"adds numbers\"\n        assertEqual(1 + 1, 2)");
         return 2;
     }
     let color = color() && std::io::stdout().is_terminal();
@@ -250,15 +277,17 @@ fn cmd_new(args: &[String]) -> i32 {
         return 1;
     }
     let manifest = format!(
-        "{{\n  \"name\": \"{name}\",\n  \"version\": \"0.1.0\",\n  \"main\": \"main.lipi\",\n  \"lipi\": \"{VERSION}\",\n  \"dependencies\": {{}}\n}}\n"
+        "{{\n  \"name\": \"{name}\",\n  \"version\": \"0.1.0\",\n  \"main\": \"src/main.lipi\",\n  \"lipi\": \"{VERSION}\",\n  \"dependencies\": {{}}\n}}\n"
     );
     let main = "\
-# Welcome to Lipi! Run this with: lipi run
+# Welcome to LiPi! Run this project with: lipi run
 
 greet(name)
-    return \"Hello, {name}!\"
+    return \"Hello, \" + name + \"!\"
 
-show greet(\"world\")
+export greet
+
+show greet(\"LiPi\")
 
 numbers = [1, 2, 3, 4, 5]
 total = numbers.sum()
@@ -267,16 +296,16 @@ show \"The total is {total}\"
     let test = "\
 # Run the tests with: lipi test
 
-import \"../main.lipi\"
+use \"../src/main.lipi\" as app
 
 test \"greets by name\"
-    assert_equal(main.greet(\"Dezy\"), \"Hello, Dezy!\")
+    assertEqual(app.greet(\"Dezy\"), \"Hello, Dezy!\")
 ";
     let files: [(PathBuf, &str); 4] = [
         (dir.join("lipi.json"), &manifest),
-        (dir.join("main.lipi"), main),
+        (dir.join("src").join("main.lipi"), main),
         (dir.join("tests").join("main_test.lipi"), test),
-        (dir.join(".gitignore"), "lipi_modules/\n.env\n"),
+        (dir.join(".gitignore"), "lipi_modules/\n.env\n*.db\n"),
     ];
     for (path, content) in files {
         if let Some(parent) = path.parent() {

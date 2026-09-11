@@ -2,10 +2,10 @@ add(a, b)
     return a + b
 
 test "adds numbers"
-    assert_equal(add(2, 3), 5)
+    assertEqual(add(2, 3), 5)
 
 test "works with text"
-    assert_equal(add("a", "b"), "ab")
+    assertEqual(add("a", "b"), "ab")
 
 test "deliberately fails"
-    assert_equal(add(2, 2), 3)
+    assertEqual(add(2, 2), 3)

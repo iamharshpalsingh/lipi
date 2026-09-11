@@ -1,8 +1,10 @@
-ERROR: this object has no field `people`
-  --> tests/language/error_runtime_trace.lipi:6:18
-   |
- 6 |     return table.people
-   |                  ^^^^^^
-Hint: If the field may be missing, use obj.get("people") or obj["people"], which give nil instead of an error.
+ERROR LIP5004: this Object has no field "people"
+
+tests/language/error_runtime_trace.lipi:6:18
+        return table.people
+                     ^^^^^^
+
+Hint: If the field may be missing, use obj.get("people") or obj["people"], which give null instead of an error.
+
   in find() called at tests/language/error_runtime_trace.lipi:3
-  in load_user() called at tests/language/error_runtime_trace.lipi:8
+  in loadUser() called at tests/language/error_runtime_trace.lipi:8

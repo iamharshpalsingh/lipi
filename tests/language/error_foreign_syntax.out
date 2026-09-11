@@ -1,6 +1,7 @@
-ERROR: I don't know what `print` is
-  --> tests/language/error_foreign_syntax.lipi:1:1
-   |
- 1 | print("hello")
-   | ^^^^^
-Hint: To print something in Lipi, write: show "Hello"
+ERROR LIP1002: undefined variable "print"
+
+tests/language/error_foreign_syntax.lipi:1:1
+    print("hello")
+    ^^^^^
+
+Hint: To print something in LiPi, write: show "Hello"

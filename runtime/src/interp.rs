@@ -5,7 +5,7 @@ use crate::methods;
 use crate::task;
 use crate::value::*;
 use lipi_compiler::ast::*;
-use lipi_compiler::checker::{self, binary_error, module_binding_name, operand_hint, unknown_member, unknown_name, with_article};
+use lipi_compiler::checker::{self, binary_error, condition_error, module_binding_name, operand_hint, unknown_member, unknown_name, with_article};
 use lipi_compiler::suggest;
 use lipi_compiler::{Diagnostic, Severity, Span};
 use std::cell::RefCell;
@@ -69,13 +69,18 @@ pub struct Interpreter {
     sources: HashMap<Rc<str>, Rc<str>>,
     modules: HashMap<PathBuf, Value>,
     loading: Vec<PathBuf>,
+    /// Names exported by each module currently being loaded.
+    exports: Vec<Vec<String>>,
     pub(crate) file: Rc<str>,
+    /// The program's main file (used for code that runs after it, such as server handlers).
+    pub(crate) main_file: Option<Rc<str>>,
     depth: usize,
     frames: Vec<Frame>,
     test_mode: bool,
     tests: Vec<TestCase>,
     pub(crate) rng: u64,
     pub project_root: PathBuf,
+    pub(crate) server: crate::server::ServerState,
 }
 
 impl Default for Interpreter {
@@ -97,13 +102,16 @@ impl Interpreter {
             sources: HashMap::new(),
             modules: HashMap::new(),
             loading: Vec::new(),
+            exports: Vec::new(),
             file: Rc::from("<main>"),
+            main_file: None,
             depth: 0,
             frames: Vec::new(),
             test_mode: false,
             tests: Vec::new(),
             rng: seed | 1,
             project_root: PathBuf::from("."),
+            server: Default::default(),
         }
     }
 
@@ -125,28 +133,41 @@ impl Interpreter {
         self.frames
             .iter()
             .map(|f| {
-                let name = if f.decl.is_lambda { "<function>" } else { f.decl.name.text.as_str() };
+                let name = match f.decl.name.text.as_str() {
+                    "<block>" => "<block>",
+                    _ if f.decl.is_lambda => "<function>",
+                    n => n,
+                };
                 format!("{name}() called at {}:{}", f.file, f.line)
             })
             .collect()
     }
 
+    /// A runtime error value (code LIP5000 unless the diagnostic has one).
     pub fn thrown(&self, message: impl Into<String>, span: Span, hint: Option<String>) -> Box<Thrown> {
         self.thrown_diag(Diagnostic::error(message, span).maybe_hint(hint))
     }
 
     fn thrown_diag(&self, diag: Diagnostic) -> Box<Thrown> {
+        let diag = diag.code_or("LIP5000");
         let mut f = Fields::new();
         f.insert("message".into(), Value::text(&diag.message));
+        f.insert("code".into(), Value::text(diag.code.unwrap_or("LIP5000")));
+        f.insert("category".into(), Value::text(diag.category()));
         f.insert("hint".into(), diag.hint.as_deref().map(Value::text).unwrap_or(Value::Nil));
-        f.insert("line".into(), diag.span.map(|s| Value::Num(s.line as f64)).unwrap_or(Value::Nil));
+        f.insert("line".into(), diag.span.map(|s| Value::Int(s.line as i64)).unwrap_or(Value::Nil));
         f.insert("file".into(), Value::text(&self.file));
         Box::new(Thrown { value: Value::object(f), diag, file: self.file.clone(), trace: self.trace() })
     }
 
-    /// A runtime error at `span` in the current file.
+    /// A general runtime error at `span` in the current file.
     pub fn error(&self, message: impl Into<String>, span: Span, hint: Option<String>) -> Flow {
         Flow::Throw(self.thrown(message, span, hint))
+    }
+
+    /// A runtime error with a specific code.
+    pub fn err(&self, code: &'static str, message: impl Into<String>, span: Span, hint: Option<String>) -> Flow {
+        self.throw(Diagnostic::error(message, span).with_code(code).maybe_hint(hint))
     }
 
     fn throw(&self, diag: Diagnostic) -> Flow {
@@ -159,6 +180,9 @@ impl Interpreter {
             RunError::Check(ds, f) => ds.iter().map(|d| self.render_diag(d, f, color)).collect::<Vec<_>>().join("\n"),
             RunError::Runtime(t) => {
                 let mut s = self.render_diag(&t.diag, &t.file, color);
+                if !t.trace.is_empty() {
+                    s.push('\n');
+                }
                 for frame in t.trace.iter().rev().take(8) {
                     s.push_str(&format!("  in {frame}\n"));
                 }
@@ -184,8 +208,7 @@ impl Interpreter {
         if run_checker {
             let names = self.builtin_names();
             let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-            let errors: Vec<Diagnostic> =
-                checker::check(&program, &refs).into_iter().filter(|d| d.severity == Severity::Error).collect();
+            let errors: Vec<Diagnostic> = checker::check(&program, &refs).into_iter().filter(|d| d.severity == Severity::Error).collect();
             if !errors.is_empty() {
                 return Err(RunError::Check(errors, file.clone()));
             }
@@ -195,13 +218,9 @@ impl Interpreter {
 
     fn read_source(path: &Path, file: &Rc<str>) -> Result<String, RunError> {
         std::fs::read_to_string(path).map_err(|e| {
-            let hint = if e.kind() == std::io::ErrorKind::NotFound {
-                "Check the file name and the folder you're in.".to_string()
-            } else {
-                e.to_string()
-            };
+            let hint = if e.kind() == std::io::ErrorKind::NotFound { "Check the file name and the folder you're in.".to_string() } else { e.to_string() };
             RunError::Syntax(
-                Diagnostic { severity: Severity::Error, message: format!("couldn't read {file}"), span: None, hint: Some(hint) },
+                Diagnostic { severity: Severity::Error, code: Some("LIP3001"), message: format!("couldn't read {file}"), span: None, hint: Some(hint) },
                 file.clone(),
             )
         })
@@ -212,12 +231,13 @@ impl Interpreter {
         let file: Rc<str> = Rc::from(path.to_string_lossy().as_ref());
         let source = Self::read_source(path, &file)?;
         self.project_root = find_project_root(path);
+        self.main_file = Some(file.clone());
         if let Ok(canon) = path.canonicalize() {
             self.loading.push(canon);
         }
         let result = self.run_source(&source, file);
         self.loading.clear();
-        result
+        result.map(|(env, _)| env)
     }
 
     /// Parse and check a file without running it.
@@ -227,15 +247,18 @@ impl Interpreter {
         self.compile(&source, &file, true).map(|_| ())
     }
 
-    fn run_source(&mut self, source: &str, file: Rc<str>) -> Result<Rc<Env>, RunError> {
+    /// Run a module's code. Returns its variables and the names it exported.
+    fn run_source(&mut self, source: &str, file: Rc<str>) -> Result<(Rc<Env>, Vec<String>), RunError> {
         let program = self.compile(source, &file, true)?;
         let env = Env::new(Some(self.globals.clone()), EnvKind::Module);
         let prev = std::mem::replace(&mut self.file, file);
+        self.exports.push(Vec::new());
         self.hoist(&program.body, &env);
         let result = self.exec_block(&program.body, &env);
+        let exported = self.exports.pop().unwrap_or_default();
         self.file = prev;
         match result {
-            Ok(()) | Err(Flow::Return(_)) | Err(Flow::Break) | Err(Flow::Continue) => Ok(env),
+            Ok(()) | Err(Flow::Return(_)) | Err(Flow::Break) | Err(Flow::Continue) => Ok((env, exported)),
             Err(Flow::Throw(t)) => Err(RunError::Runtime(t)),
             Err(Flow::Exit(code)) => Err(RunError::Exit(code)),
         }
@@ -301,12 +324,13 @@ impl Interpreter {
     /// can be called from anywhere in the file.
     fn hoist(&mut self, body: &Block, env: &Rc<Env>) {
         for stmt in body {
+            let stmt = match &stmt.kind {
+                StmtKind::Export { inner: Some(inner), .. } => inner,
+                _ => stmt,
+            };
             match &stmt.kind {
                 StmtKind::Func(f) => env.define(&f.name.text, self.closure(f, env)),
-                StmtKind::TypeDef(t) => env.define(
-                    &t.name.text,
-                    Value::Type(Rc::new(TypeInfo { decl: t.clone(), env: env.clone(), file: self.file.clone() })),
-                ),
+                StmtKind::TypeDef(t) => env.define(&t.name.text, Value::Type(Rc::new(TypeInfo { decl: t.clone(), env: env.clone(), file: self.file.clone() }))),
                 _ => {}
             }
         }
@@ -332,6 +356,32 @@ impl Interpreter {
         }
     }
 
+    /// A condition must be a real Boolean.
+    fn truth(&self, v: &Value, e: &Expr) -> Result<bool, Flow> {
+        match v {
+            Value::Bool(b) => Ok(*b),
+            other => Err(self.throw(condition_error(e, &other.type_name()))),
+        }
+    }
+
+    /// A callback used as a test (filter, find, ...) must return a Boolean.
+    pub fn expect_bool(&self, v: &Value, span: Span, what: &str) -> Result<bool, Flow> {
+        match v {
+            Value::Bool(b) => Ok(*b),
+            other => Err(self.err(
+                "LIP2005",
+                format!("{what} must return true or false, but it returned {}", with_article(&other.type_name())),
+                span,
+                Some("Return a comparison, for example: items.filter(x => x > 3)".into()),
+            )),
+        }
+    }
+
+    fn eval_cond(&mut self, e: &Expr, env: &Rc<Env>) -> Result<bool, Flow> {
+        let v = self.eval(e, env)?;
+        self.truth(&v, e)
+    }
+
     fn exec(&mut self, stmt: &Stmt, env: &Rc<Env>) -> Result<(), Flow> {
         match &stmt.kind {
             StmtKind::Expr(e) => {
@@ -349,7 +399,7 @@ impl Interpreter {
             StmtKind::Assign { target, op, ty, value, constant } => self.assign(target, *op, ty.as_ref(), value, *constant, env)?,
             StmtKind::If { branches, otherwise } => {
                 for (cond, body) in branches {
-                    if self.eval(cond, env)?.truthy() {
+                    if self.eval_cond(cond, env)? {
                         return self.exec_block(body, env);
                     }
                 }
@@ -358,7 +408,7 @@ impl Interpreter {
                 }
             }
             StmtKind::While { cond, body } => {
-                while self.eval(cond, env)?.truthy() {
+                while self.eval_cond(cond, env)? {
                     if !self.loop_body(body, env)? {
                         break;
                     }
@@ -366,11 +416,9 @@ impl Interpreter {
             }
             StmtKind::Repeat { count, body } => {
                 let n = match self.eval(count, env)? {
-                    Value::Num(n) if n >= 0.0 => n.floor() as u64,
-                    Value::Num(_) => return Err(self.error("`repeat` needs a number that isn't negative", count.span, None)),
-                    other => {
-                        return Err(self.error("`repeat` needs a number", count.span, Some(operand_hint(count, &other.type_name(), None))))
-                    }
+                    Value::Int(n) if n >= 0 => n,
+                    Value::Int(_) => return Err(self.err("LIP5008", "`repeat` needs an Integer that isn't negative", count.span, None)),
+                    other => return Err(self.err("LIP2001", "`repeat` needs an Integer", count.span, Some(operand_hint(count, &other.type_name(), None)))),
                 };
                 for _ in 0..n {
                     if !self.loop_body(body, env)? {
@@ -392,11 +440,11 @@ impl Interpreter {
             StmtKind::Throw(e) => {
                 let v = self.eval(e, env)?;
                 let message = match &v {
-                    Value::Str(s) => return Err(self.error(s.to_string(), stmt.span, None)),
+                    Value::Str(s) => return Err(self.err("LIP5006", s.to_string(), stmt.span, None)),
                     Value::Object(o) => o.fields.borrow().get("message").map(|m| m.display()).unwrap_or_else(|| v.repr()),
                     other => other.repr(),
                 };
-                let diag = Diagnostic::error(message, stmt.span);
+                let diag = Diagnostic::error(message, stmt.span).with_code("LIP5006");
                 return Err(Flow::Throw(Box::new(Thrown { value: v, diag, file: self.file.clone(), trace: self.trace() })));
             }
             StmtKind::Try { body, catch, finally } => {
@@ -424,8 +472,8 @@ impl Interpreter {
                             ExprKind::Range { start, end, step: None } => {
                                 let lo = self.eval(start, env)?;
                                 let hi = self.eval(end, env)?;
-                                match (&v, lo, hi) {
-                                    (Value::Num(x), Value::Num(a), Value::Num(b)) => *x >= a.min(b) && *x <= a.max(b),
+                                match (v.as_f64(), lo.as_f64(), hi.as_f64()) {
+                                    (Some(x), Some(a), Some(b)) => x >= a.min(b) && x <= a.max(b),
                                     _ => false,
                                 }
                             }
@@ -437,7 +485,7 @@ impl Interpreter {
                     }
                     if matched {
                         if let Some(g) = &arm.guard {
-                            if !self.eval(g, env)?.truthy() {
+                            if !self.eval_cond(g, env)? {
                                 continue;
                             }
                         }
@@ -448,8 +496,8 @@ impl Interpreter {
                     self.exec_block(body, env)?;
                 }
             }
-            StmtKind::Import { source, alias, names } => {
-                let module = self.import(source, stmt.span)?;
+            StmtKind::Use { source, alias, names } => {
+                let module = self.use_module(source, stmt.span)?;
                 match names {
                     Some(names) => {
                         for n in names {
@@ -464,10 +512,9 @@ impl Interpreter {
                                         Value::Object(o) => o.fields.borrow().keys().cloned().collect(),
                                         _ => Vec::new(),
                                     };
-                                    let hint = suggest::closest(&n.text, available.iter().map(String::as_str))
-                                        .map(|c| format!("Did you mean `{c}`?"))
-                                        .unwrap_or_else(|| format!("It provides: {}", available.join(", ")));
-                                    return Err(self.error(format!("`{source}` has no `{}`", n.text), n.span, Some(hint)));
+                                    let hint = suggest::did_you_mean(&n.text, available.iter().map(String::as_str))
+                                        .unwrap_or_else(|| format!("If \"{}\" is defined there, add `export {}` to that file.", n.text, n.text));
+                                    return Err(self.err("LIP3003", format!("\"{source}\" doesn't export \"{}\"", n.text), n.span, Some(hint)));
                                 }
                             }
                         }
@@ -478,10 +525,19 @@ impl Interpreter {
                     }
                 }
             }
-            StmtKind::TypeDef(t) => env.define(
-                &t.name.text,
-                Value::Type(Rc::new(TypeInfo { decl: t.clone(), env: env.clone(), file: self.file.clone() })),
-            ),
+            StmtKind::Export { names, inner } => {
+                if let Some(s) = inner {
+                    self.exec(s, env)?;
+                }
+                if let Some(list) = self.exports.last_mut() {
+                    for n in names {
+                        if !list.contains(&n.text) {
+                            list.push(n.text.clone());
+                        }
+                    }
+                }
+            }
+            StmtKind::TypeDef(t) => env.define(&t.name.text, Value::Type(Rc::new(TypeInfo { decl: t.clone(), env: env.clone(), file: self.file.clone() }))),
             StmtKind::Test { name, body } => {
                 if self.test_mode {
                     self.tests.push(TestCase { name: name.clone(), body: body.clone(), env: env.clone(), file: self.file.clone() });
@@ -495,33 +551,35 @@ impl Interpreter {
         if let ExprKind::Range { start, end, step } = &iter.kind {
             let (from, to, step) = self.range_parts(start, end, step.as_deref(), env)?;
             let mut i = from;
-            let mut index = 0.0;
-            while (step > 0.0 && i <= to) || (step < 0.0 && i >= to) {
+            let mut index = 0i64;
+            while (step > 0 && i <= to) || (step < 0 && i >= to) {
                 match second {
                     Some(s) => {
-                        env.define(&first.text, Value::Num(index));
-                        env.define(&s.text, Value::Num(i));
+                        env.define(&first.text, Value::Int(index));
+                        env.define(&s.text, Value::Int(i));
                     }
-                    None => env.define(&first.text, Value::Num(i)),
+                    None => env.define(&first.text, Value::Int(i)),
                 }
                 if !self.loop_body(body, env)? {
                     break;
                 }
-                i += step;
-                index += 1.0;
+                let Some(next) = i.checked_add(step) else { break };
+                i = next;
+                index += 1;
             }
             return Ok(());
         }
         let collection = self.eval(iter, env)?;
         let (pairs, keyed): (Vec<(Value, Value)>, bool) = match &collection {
-            Value::List(items) => (items.borrow().iter().enumerate().map(|(i, v)| (Value::Num(i as f64), v.clone())).collect(), false),
-            Value::Str(s) => (s.chars().enumerate().map(|(i, c)| (Value::Num(i as f64), Value::string(c.to_string()))).collect(), false),
+            Value::List(items) => (items.borrow().iter().enumerate().map(|(i, v)| (Value::Int(i as i64), v.clone())).collect(), false),
+            Value::Str(s) => (s.chars().enumerate().map(|(i, c)| (Value::Int(i as i64), Value::string(c.to_string()))).collect(), false),
             Value::Object(o) => (o.fields.borrow().iter().map(|(k, v)| (Value::text(k), v.clone())).collect(), true),
             other => {
-                return Err(self.error(
-                    format!("can't loop over {}", with_article(&other.type_name())),
+                return Err(self.err(
+                    "LIP2001",
+                    format!("cannot loop over {}", with_article(&other.type_name())),
                     iter.span,
-                    Some("Loop over a list, text, an object or a range like 1 to 10.".into()),
+                    Some("Loop over an Array, a String, an Object or a range like 1 to 10.".into()),
                 ))
             }
         };
@@ -540,25 +598,25 @@ impl Interpreter {
         Ok(())
     }
 
-    fn range_parts(&mut self, start: &Expr, end: &Expr, step: Option<&Expr>, env: &Rc<Env>) -> Result<(f64, f64, f64), Flow> {
-        let num = |this: &mut Self, e: &Expr| -> Result<f64, Flow> {
+    fn range_parts(&mut self, start: &Expr, end: &Expr, step: Option<&Expr>, env: &Rc<Env>) -> Result<(i64, i64, i64), Flow> {
+        let int = |this: &mut Self, e: &Expr| -> Result<i64, Flow> {
             match this.eval(e, env)? {
-                Value::Num(n) => Ok(n),
-                other => Err(this.error("ranges need numbers", e.span, Some(operand_hint(e, &other.type_name(), None)))),
+                Value::Int(n) => Ok(n),
+                other => Err(this.err("LIP2001", "ranges need Integers", e.span, Some(operand_hint(e, &other.type_name(), None)))),
             }
         };
-        let from = num(self, start)?;
-        let to = num(self, end)?;
+        let from = int(self, start)?;
+        let to = int(self, end)?;
         let step = match step {
             Some(s) => {
-                let n = num(self, s)?;
-                if n == 0.0 {
-                    return Err(self.error("a range's step can't be 0", s.span, None));
+                let n = int(self, s)?;
+                if n == 0 {
+                    return Err(self.err("LIP5008", "a range's step can't be 0", s.span, None));
                 }
                 n
             }
-            None if to >= from => 1.0,
-            None => -1.0,
+            None if to >= from => 1,
+            None => -1,
         };
         Ok((from, to, step))
     }
@@ -623,18 +681,20 @@ impl Interpreter {
                 let mut vars = e.vars.borrow_mut();
                 if let Some(slot) = vars.get_mut(name) {
                     if slot.constant {
-                        return Err(self.error(
-                            format!("`{name}` is a constant and can't be changed"),
+                        return Err(self.err(
+                            "LIP1003",
+                            format!("\"{name}\" is a constant and can't be changed"),
                             value_span,
                             Some("Remove `const` where it's defined if it needs to change.".into()),
                         ));
                     }
                     if let Some(t) = &slot.declared {
                         if !self.matches_type(&v, t) {
-                            return Err(self.error(
-                                format!("`{name}` should be {}, but this is {}", with_article(&t.to_string()), with_article(&v.type_name())),
+                            return Err(self.err(
+                                "LIP2002",
+                                format!("\"{name}\" should be {}, but this is {}", with_article(&t.to_string()), with_article(&v.type_name())),
                                 value_span,
-                                Some(format!("`{name}` was declared as {t}.")),
+                                Some(format!("\"{name}\" was declared as {t}.")),
                             ));
                         }
                     }
@@ -652,10 +712,11 @@ impl Interpreter {
         if self.matches_type(v, t) {
             return Ok(());
         }
-        Err(self.error(
-            format!("`{name}` should be {}, but this is {}", with_article(&t.to_string()), with_article(&v.type_name())),
+        Err(self.err(
+            "LIP2002",
+            format!("\"{name}\" should be {}, but this is {}", with_article(&t.to_string()), with_article(&v.type_name())),
             span,
-            Some(format!("`{name}` was declared as {t}.")),
+            Some(format!("\"{name}\" was declared as {t}.")),
         ))
     }
 
@@ -667,15 +728,16 @@ impl Interpreter {
                 _ => false,
             },
             TypeKind::Named(n) => match n.as_str() {
-                "any" => true,
-                "number" => matches!(v, Value::Num(_)),
-                "string" => matches!(v, Value::Str(_)),
-                "bool" => matches!(v, Value::Bool(_)),
-                "nil" => matches!(v, Value::Nil),
-                "list" => matches!(v, Value::List(_)),
-                "object" => matches!(v, Value::Object(_)),
-                "function" => matches!(v, Value::Func(_) | Value::Native(_) | Value::Type(_) | Value::Method(_)),
-                "task" => matches!(v, Value::Task(_)),
+                "Any" => true,
+                "Integer" => matches!(v, Value::Int(_)),
+                "Decimal" | "Number" => v.is_number(),
+                "String" => matches!(v, Value::Str(_)),
+                "Boolean" => matches!(v, Value::Bool(_)),
+                "Null" => matches!(v, Value::Nil),
+                "Array" => matches!(v, Value::List(_)),
+                "Object" => matches!(v, Value::Object(_)),
+                "Function" => matches!(v, Value::Func(_) | Value::Native(_) | Value::Type(_) | Value::Method(_)),
+                "Task" => matches!(v, Value::Task(_)),
                 other => matches!(v, Value::Object(o) if o.ty.as_ref().is_some_and(|ty| ty.decl.name.text == other)),
             },
         }
@@ -695,7 +757,8 @@ impl Interpreter {
 
     pub fn eval(&mut self, e: &Expr, env: &Rc<Env>) -> Result<Value, Flow> {
         Ok(match &e.kind {
-            ExprKind::Number(n) => Value::Num(*n),
+            ExprKind::Int(n) => Value::Int(*n),
+            ExprKind::Decimal(n) => Value::Num(*n),
             ExprKind::Str(s) => Value::text(s),
             ExprKind::Template(parts) => {
                 let mut out = String::new();
@@ -708,7 +771,7 @@ impl Interpreter {
                 Value::string(out)
             }
             ExprKind::Bool(b) => Value::Bool(*b),
-            ExprKind::Nil => Value::Nil,
+            ExprKind::Null => Value::Nil,
             ExprKind::Ident(name) => self.lookup(name, e.span, env)?,
             ExprKind::List(items) => {
                 let mut out = Vec::with_capacity(items.len());
@@ -725,25 +788,26 @@ impl Interpreter {
                 Value::object(map)
             }
             ExprKind::Unary(UnaryOp::Neg, inner) => match self.eval(inner, env)? {
+                Value::Int(n) => Value::Int(n.checked_neg().ok_or_else(|| self.overflow(inner.span))?),
                 Value::Num(n) => Value::Num(-n),
-                other => return Err(self.error("expected a number", inner.span, Some(operand_hint(inner, &other.type_name(), None)))),
+                other => {
+                    return Err(self.err("LIP2001", format!("cannot negate {}", with_article(&other.type_name())), inner.span, Some(operand_hint(inner, &other.type_name(), None))))
+                }
             },
-            ExprKind::Unary(UnaryOp::Not, inner) => Value::Bool(!self.eval(inner, env)?.truthy()),
+            ExprKind::Unary(UnaryOp::Not, inner) => Value::Bool(!self.eval_cond(inner, env)?),
             ExprKind::Binary(op, l, r) => {
                 let lv = self.eval(l, env)?;
                 let rv = self.eval(r, env)?;
                 self.binary(*op, lv, rv, l, r)?
             }
-            ExprKind::And(l, r) => {
-                let lv = self.eval(l, env)?;
-                if !lv.truthy() { lv } else { self.eval(r, env)? }
-            }
-            ExprKind::Or(l, r) => {
-                let lv = self.eval(l, env)?;
-                if lv.truthy() { lv } else { self.eval(r, env)? }
-            }
+            ExprKind::And(l, r) => Value::Bool(self.eval_cond(l, env)? && self.eval_cond(r, env)?),
+            ExprKind::Or(l, r) => Value::Bool(self.eval_cond(l, env)? || self.eval_cond(r, env)?),
             ExprKind::IfElse { cond, then, otherwise } => {
-                if self.eval(cond, env)?.truthy() { self.eval(then, env)? } else { self.eval(otherwise, env)? }
+                if self.eval_cond(cond, env)? {
+                    self.eval(then, env)?
+                } else {
+                    self.eval(otherwise, env)?
+                }
             }
             ExprKind::Coalesce(l, r) => match self.eval(l, env)? {
                 Value::Nil => self.eval(r, env)?,
@@ -751,15 +815,18 @@ impl Interpreter {
             },
             ExprKind::Range { start, end, step } => {
                 let (from, to, step) = self.range_parts(start, end, step.as_deref(), env)?;
-                let count = ((to - from) / step).floor();
-                if count > 10_000_000.0 {
-                    return Err(self.error("this range is too big to turn into a list", e.span, Some("Loop over it directly with `for i in a to b` instead.".into())));
+                let count = (to as i128 - from as i128) / step as i128;
+                if count > 10_000_000 {
+                    return Err(self.err("LIP5008", "this range is too big to turn into an Array", e.span, Some("Loop over it directly with `for i in a to b` instead.".into())));
                 }
                 let mut items = Vec::new();
                 let mut i = from;
-                while (step > 0.0 && i <= to) || (step < 0.0 && i >= to) {
-                    items.push(Value::Num(i));
-                    i += step;
+                while (step > 0 && i <= to) || (step < 0 && i >= to) {
+                    items.push(Value::Int(i));
+                    match i.checked_add(step) {
+                        Some(n) => i = n,
+                        None => break,
+                    }
                 }
                 Value::list(items)
             }
@@ -794,12 +861,12 @@ impl Interpreter {
     }
 
     /// The value before `?.`: like `eval`, except that a field missing from a
-    /// plain object gives nil, so `user.address?.city` is nil when there's no address.
+    /// plain Object gives null, so `user.address?.city` is null when there's no address.
     fn eval_lenient(&mut self, e: &Expr, env: &Rc<Env>) -> Result<Value, Flow> {
         if let ExprKind::Field { object, name, optional } = &e.kind {
             let obj = if *optional { self.eval_lenient(object, env)? } else { self.eval(object, env)? };
             if let Value::Object(o) = &obj {
-                if o.ty.is_none() && o.module.is_none() && !o.fields.borrow().contains_key(&name.text) {
+                if o.ty.is_none() && o.module.is_none() && o.tag.is_none() && !o.fields.borrow().contains_key(&name.text) {
                     return Ok(Value::Nil);
                 }
             }
@@ -821,10 +888,46 @@ impl Interpreter {
         Ok((pos, named))
     }
 
+    fn overflow(&self, span: Span) -> Flow {
+        self.err(
+            "LIP5009",
+            "this Integer calculation overflowed",
+            span,
+            Some("Integers go up to 9223372036854775807. For bigger values, use Decimals (for example 1.0 * x).".into()),
+        )
+    }
+
     pub fn binary(&self, op: BinOp, l: Value, r: Value, le: &Expr, re: &Expr) -> Result<Value, Flow> {
         use Value::*;
+        let both = le.span.to(re.span);
+        let div_zero = || self.err("LIP5002", "cannot divide by zero", re.span, Some("Check that the number you divide by isn't 0 first.".into()));
         Ok(match (op, &l, &r) {
-            (BinOp::Add, Num(a), Num(b)) => Num(a + b),
+            (BinOp::Eq, _, _) => Bool(l.equals(&r)),
+            (BinOp::NotEq, _, _) => Bool(!l.equals(&r)),
+            (BinOp::Add, Int(a), Int(b)) => Int(a.checked_add(*b).ok_or_else(|| self.overflow(both))?),
+            (BinOp::Sub, Int(a), Int(b)) => Int(a.checked_sub(*b).ok_or_else(|| self.overflow(both))?),
+            (BinOp::Mul, Int(a), Int(b)) => Int(a.checked_mul(*b).ok_or_else(|| self.overflow(both))?),
+            (BinOp::Mod, Int(_), Int(0)) => return Err(div_zero()),
+            (BinOp::Mod, Int(a), Int(b)) => {
+                let m = a.wrapping_rem(*b);
+                Int(if m != 0 && ((m < 0) != (*b < 0)) { m + b } else { m })
+            }
+            (BinOp::Pow, Int(a), Int(b)) if *b >= 0 => {
+                Int(u32::try_from(*b).ok().and_then(|e| a.checked_pow(e)).ok_or_else(|| self.overflow(both))?)
+            }
+            (op, a, b) if op.is_arithmetic() && a.is_number() && b.is_number() => {
+                let (x, y) = (a.as_f64().unwrap_or(0.0), b.as_f64().unwrap_or(0.0));
+                match op {
+                    BinOp::Add => Num(x + y),
+                    BinOp::Sub => Num(x - y),
+                    BinOp::Mul => Num(x * y),
+                    BinOp::Div if y == 0.0 => return Err(div_zero()),
+                    BinOp::Div => Num(x / y),
+                    BinOp::Mod if y == 0.0 => return Err(div_zero()),
+                    BinOp::Mod => Num(x - y * (x / y).floor()),
+                    _ => Num(x.powf(y)),
+                }
+            }
             (BinOp::Add, Str(a), Str(b)) => {
                 let mut s = String::with_capacity(a.len() + b.len());
                 s.push_str(a);
@@ -836,20 +939,7 @@ impl Interpreter {
                 items.extend(b.borrow().iter().cloned());
                 Value::list(items)
             }
-            (BinOp::Sub, Num(a), Num(b)) => Num(a - b),
-            (BinOp::Mul, Num(a), Num(b)) => Num(a * b),
-            (BinOp::Div, Num(_), Num(b)) if *b == 0.0 => {
-                return Err(self.error("can't divide by zero", re.span, Some("Check that the number you divide by isn't 0 first.".into())))
-            }
-            (BinOp::Div, Num(a), Num(b)) => Num(a / b),
-            (BinOp::Mod, Num(_), Num(b)) if *b == 0.0 => {
-                return Err(self.error("can't take the remainder of dividing by zero", re.span, None))
-            }
-            (BinOp::Mod, Num(a), Num(b)) => Num(a - b * (a / b).floor()),
-            (BinOp::Pow, Num(a), Num(b)) => Num(a.powf(*b)),
-            (BinOp::Eq, _, _) => Bool(l.equals(&r)),
-            (BinOp::NotEq, _, _) => Bool(!l.equals(&r)),
-            (op, Num(a), Num(b)) if op.is_ordering() => Bool(compare(op, a.partial_cmp(b))),
+            (op, a, b) if op.is_ordering() && a.is_number() && b.is_number() => Bool(compare(op, a.as_f64().partial_cmp(&b.as_f64()))),
             (op, Str(a), Str(b)) if op.is_ordering() => Bool(compare(op, a.partial_cmp(b))),
             (BinOp::In | BinOp::NotIn, _, List(items)) => {
                 let found = items.borrow().iter().any(|x| x.equals(&l));
@@ -863,10 +953,10 @@ impl Interpreter {
 
     // ----- fields and indexes ----------------------------------------------
 
-    fn nil_hint(obj_expr: &Expr, what: &str) -> Option<String> {
+    fn null_hint(obj_expr: &Expr, what: &str) -> Option<String> {
         match &obj_expr.kind {
-            ExprKind::Ident(n) => Some(format!("`{n}` is nil. Use {n}?{what} to get nil instead of an error.")),
-            _ => Some(format!("Use ?{what} to get nil instead of an error when the value is nil.")),
+            ExprKind::Ident(n) => Some(format!("\"{n}\" is null. Use {n}?{what} to get null instead of an error.")),
+            _ => Some(format!("Use ?{what} to get null instead of an error when the value is null.")),
         }
     }
 
@@ -874,24 +964,25 @@ impl Interpreter {
         let key = name.text.as_str();
         match obj {
             Value::Nil if optional => Ok(Value::Nil),
-            Value::Nil => Err(self.error(format!("can't read `.{key}` of nil"), name.span, Self::nil_hint(obj_expr, &format!(".{key}")))),
+            Value::Nil => Err(self.err("LIP5003", format!("cannot read \".{key}\" of null"), name.span, Self::null_hint(obj_expr, &format!(".{key}")))),
             Value::Object(o) => {
                 if let Some(v) = o.fields.borrow().get(key) {
                     return Ok(v.clone());
                 }
+                if o.tag == Some("db") {
+                    // `db.users` is the users table
+                    if let Some(table) = crate::db::table(o, key) {
+                        return Ok(table);
+                    }
+                }
                 if let Some(ty) = &o.ty {
                     if let Some(m) = ty.decl.methods.iter().find(|m| m.name.text == key) {
-                        return Ok(Value::Func(Rc::new(Closure {
-                            decl: m.clone(),
-                            env: ty.env.clone(),
-                            file: ty.file.clone(),
-                            this: Some(obj.clone()),
-                        })));
+                        return Ok(Value::Func(Rc::new(Closure { decl: m.clone(), env: ty.env.clone(), file: ty.file.clone(), this: Some(obj.clone()) })));
                     }
                 }
                 if o.module.is_none() {
                     if key == "length" {
-                        return Ok(Value::Num(o.fields.borrow().len() as f64));
+                        return Ok(Value::Int(o.fields.borrow().len() as i64));
                     }
                     if checker::OBJECT_MEMBERS.contains(&key) {
                         return Ok(Value::Method(Rc::new((obj.clone(), key.to_string()))));
@@ -899,8 +990,9 @@ impl Interpreter {
                 }
                 Err(self.missing_field(o, name))
             }
-            Value::Type(t) => Err(self.error(
-                format!("`{}` is a type; create one first to use `.{key}`", t.decl.name.text),
+            Value::Type(t) => Err(self.err(
+                "LIP5004",
+                format!("\"{}\" is a type; create one first to use \".{key}\"", t.decl.name.text),
                 name.span,
                 Some(format!("For example: item = {}(...) and then item.{key}", t.decl.name.text)),
             )),
@@ -911,7 +1003,7 @@ impl Interpreter {
                 match methods::members_for(obj) {
                     Some((_, members)) if members.contains(&key) => Ok(Value::Method(Rc::new((obj.clone(), key.to_string())))),
                     Some((tyname, members)) => Err(self.throw(unknown_member(tyname, key, name.span, members))),
-                    None => Err(self.error(format!("{} has no `.{key}`", with_article(&obj.type_name())), name.span, None)),
+                    None => Err(self.err("LIP1004", format!("{} has no \".{key}\"", with_article(&obj.type_name())), name.span, None)),
                 }
             }
         }
@@ -923,28 +1015,32 @@ impl Interpreter {
         if let Some(ty) = &o.ty {
             available.extend(ty.decl.methods.iter().map(|m| m.name.text.clone()));
         }
-        let message = match (&o.module, &o.ty) {
-            (Some(m), _) => format!("the `{m}` module has no `{key}`"),
-            (_, Some(t)) => format!("`{}` has no field or method `{key}`", t.decl.name.text),
-            _ => format!("this object has no field `{key}`"),
+        let suggestion = suggest::did_you_mean(key, available.iter().map(String::as_str));
+        let (code, message, fallback) = match (&o.module, &o.ty) {
+            (Some(m), _) if builtins::MODULES.contains(&m.as_str()) => {
+                ("LIP1004", format!("the {m} module has no \"{key}\""), Some(format!("Available: {}", available.join(", "))))
+            }
+            (Some(m), _) => (
+                "LIP3003",
+                format!("module \"{m}\" doesn't export \"{key}\""),
+                Some(format!("If \"{key}\" is defined in {m}.lipi, add: export {key}")),
+            ),
+            (_, Some(t)) => ("LIP5004", format!("\"{}\" has no field or method \"{key}\"", t.decl.name.text), Some(format!("Available: {}", available.join(", ")))),
+            _ => (
+                "LIP5004",
+                format!("this Object has no field \"{key}\""),
+                Some(format!("If the field may be missing, use obj.get(\"{key}\") or obj[\"{key}\"], which give null instead of an error.")),
+            ),
         };
-        let hint = suggest::closest(key, available.iter().map(String::as_str))
-            .map(|c| format!("Did you mean `{c}`?"))
-            .or_else(|| {
-                if o.module.is_none() && o.ty.is_none() {
-                    Some(format!("If the field may be missing, use obj.get(\"{key}\") or obj[\"{key}\"], which give nil instead of an error."))
-                } else if available.is_empty() {
-                    None
-                } else {
-                    Some(format!("Available: {}", available.join(", ")))
-                }
-            });
-        self.error(message, name.span, hint)
+        self.err(code, message, name.span, suggestion.or(fallback))
     }
 
     fn set_field(&mut self, obj: &Value, name: &Name, v: Value, obj_expr: &Expr, value_span: Span) -> Result<(), Flow> {
         match obj {
             Value::Object(o) => {
+                if o.module.is_some() {
+                    return Err(self.err("LIP5008", "modules can't be changed from outside", name.span, None));
+                }
                 if let Some(ty) = &o.ty {
                     match ty.decl.fields.iter().find(|f| f.name.text == name.text) {
                         Some(field) => {
@@ -954,36 +1050,31 @@ impl Interpreter {
                         }
                         None => {
                             let names: Vec<&str> = ty.decl.fields.iter().map(|f| f.name.text.as_str()).collect();
-                            let hint = suggest::closest(&name.text, names.iter().copied())
-                                .map(|c| format!("Did you mean `{c}`?"))
-                                .unwrap_or_else(|| format!("Its fields are: {}", names.join(", ")));
-                            return Err(self.error(format!("`{}` has no field `{}`", ty.decl.name.text, name.text), name.span, Some(hint)));
+                            let hint = suggest::did_you_mean(&name.text, names.iter().copied()).unwrap_or_else(|| format!("Its fields are: {}", names.join(", ")));
+                            return Err(self.err("LIP5004", format!("\"{}\" has no field \"{}\"", ty.decl.name.text, name.text), name.span, Some(hint)));
                         }
                     }
                 }
                 o.fields.borrow_mut().insert(name.text.clone(), v);
                 Ok(())
             }
-            Value::Nil => Err(self.error(format!("can't set `.{}` on nil", name.text), name.span, Self::nil_hint(obj_expr, &format!(".{}", name.text)))),
-            other => Err(self.error(format!("can't set a field on {}", with_article(&other.type_name())), name.span, None)),
+            Value::Nil => Err(self.err("LIP5003", format!("cannot set \".{}\" on null", name.text), name.span, Self::null_hint(obj_expr, &format!(".{}", name.text)))),
+            other => Err(self.err("LIP5008", format!("cannot set a field on {}", with_article(&other.type_name())), name.span, None)),
         }
     }
 
     fn list_position(&self, index: &Value, len: usize, index_expr: &Expr) -> Result<usize, Flow> {
-        let Value::Num(n) = index else {
-            return Err(self.error("list positions must be numbers", index_expr.span, Some(operand_hint(index_expr, &index.type_name(), None))));
+        let Value::Int(n) = index else {
+            return Err(self.err("LIP2001", "positions in Arrays and Strings must be Integers", index_expr.span, Some(operand_hint(index_expr, &index.type_name(), None))));
         };
-        if n.fract() != 0.0 {
-            return Err(self.error(format!("positions must be whole numbers, not {}", format_number(*n)), index_expr.span, None));
-        }
-        let i = if *n < 0.0 { len as f64 + n } else { *n };
-        if i < 0.0 || i >= len as f64 {
+        let i = if *n < 0 { len as i64 + n } else { *n };
+        if i < 0 || i >= len as i64 {
             let hint = if len == 0 {
-                "The list is empty. Add items with .push(item) first.".to_string()
+                "The Array is empty. Add items with .push(item) first.".to_string()
             } else {
                 format!("Positions start at 0, so the last one is {}. Negative positions count from the end: -1 is the last item.", len - 1)
             };
-            return Err(self.error(format!("position {} is outside the list (it has {len} item{})", format_number(*n), if len == 1 { "" } else { "s" }), index_expr.span, Some(hint)));
+            return Err(self.err("LIP5001", format!("index {n} is outside array length {len}"), index_expr.span, Some(hint)));
         }
         Ok(i as usize)
     }
@@ -1002,10 +1093,10 @@ impl Interpreter {
             }
             Value::Object(o) => match index {
                 Value::Str(k) => Ok(o.fields.borrow().get(&**k).cloned().unwrap_or(Value::Nil)),
-                other => Err(self.error(format!("object keys are text, not {}", with_article(&other.type_name())), index_expr.span, None)),
+                other => Err(self.err("LIP2001", format!("Object keys are Strings, not {}", with_article(&other.type_name())), index_expr.span, None)),
             },
-            Value::Nil => Err(self.error("can't read an item from nil", index_expr.span, Self::nil_hint(obj_expr, "[...]"))),
-            other => Err(self.error(format!("can't use [ ] on {}", with_article(&other.type_name())), index_expr.span, None)),
+            Value::Nil => Err(self.err("LIP5003", "cannot read an item from null", index_expr.span, Self::null_hint(obj_expr, "[...]"))),
+            other => Err(self.err("LIP2001", format!("cannot use [ ] on {}", with_article(&other.type_name())), index_expr.span, None)),
         }
     }
 
@@ -1013,9 +1104,10 @@ impl Interpreter {
         match obj {
             Value::List(items) => {
                 let len = items.borrow().len();
-                if matches!(index, Value::Num(n) if *n == len as f64) {
-                    return Err(self.error(
-                        format!("position {len} is just past the end of the list"),
+                if matches!(index, Value::Int(n) if *n == len as i64) {
+                    return Err(self.err(
+                        "LIP5001",
+                        format!("index {len} is just past the end of the array"),
                         index_expr.span,
                         Some("To add an item to the end, use .push(item).".into()),
                     ));
@@ -1026,22 +1118,23 @@ impl Interpreter {
             }
             Value::Object(o) => match index {
                 Value::Str(k) => {
-                    if o.ty.is_some() {
+                    if o.ty.is_some() || o.module.is_some() {
                         let name = Name { text: k.to_string(), span: index_expr.span };
                         return self.set_field(obj, &name, v, obj_expr, index_expr.span);
                     }
                     o.fields.borrow_mut().insert(k.to_string(), v);
                     Ok(())
                 }
-                other => Err(self.error(format!("object keys are text, not {}", with_article(&other.type_name())), index_expr.span, None)),
+                other => Err(self.err("LIP2001", format!("Object keys are Strings, not {}", with_article(&other.type_name())), index_expr.span, None)),
             },
-            Value::Str(_) => Err(self.error(
-                "text can't be changed in place",
+            Value::Str(_) => Err(self.err(
+                "LIP5008",
+                "Strings can't be changed in place",
                 index_expr.span,
-                Some("Build a new string instead, for example with .replace() or .slice().".into()),
+                Some("Build a new String instead, for example with .replace() or .slice().".into()),
             )),
-            Value::Nil => Err(self.error("can't set an item on nil", index_expr.span, Self::nil_hint(obj_expr, "[...]"))),
-            other => Err(self.error(format!("can't use [ ] on {}", with_article(&other.type_name())), index_expr.span, None)),
+            Value::Nil => Err(self.err("LIP5003", "cannot set an item on null", index_expr.span, Self::null_hint(obj_expr, "[...]"))),
+            other => Err(self.err("LIP2001", format!("cannot use [ ] on {}", with_article(&other.type_name())), index_expr.span, None)),
         }
     }
 
@@ -1069,7 +1162,7 @@ impl Interpreter {
                 }
                 Err(self.missing_field(o, name))
             }
-            Value::Nil => Err(self.error(format!("can't call `.{key}()` on nil"), name.span, Self::nil_hint(obj_expr, &format!(".{key}()")))),
+            Value::Nil => Err(self.err("LIP5003", format!("cannot call \".{key}()\" on null"), name.span, Self::null_hint(obj_expr, &format!(".{key}()")))),
             _ => {
                 let mut args = Args { pos, named, span, name: key.to_string() };
                 if let Some(r) = methods::call(self, &obj, key, &mut args) {
@@ -1077,7 +1170,7 @@ impl Interpreter {
                 }
                 match methods::members_for(&obj) {
                     Some((tyname, members)) => Err(self.throw(unknown_member(tyname, key, name.span, members))),
-                    None => Err(self.error(format!("{} has no method `{key}`", with_article(&obj.type_name())), name.span, None)),
+                    None => Err(self.err("LIP1004", format!("{} has no method \"{key}\"", with_article(&obj.type_name())), name.span, None)),
                 }
             }
         }
@@ -1094,15 +1187,16 @@ impl Interpreter {
             Value::Type(t) => self.construct(&t, pos, named, span),
             Value::Method(m) => {
                 let name = Name { text: m.1.clone(), span };
-                let dummy = Expr { kind: ExprKind::Nil, span };
+                let dummy = Expr { kind: ExprKind::Null, span };
                 self.call_method(m.0.clone(), &name, pos, named, span, &dummy)
             }
             other => {
                 let what = match callee.map(|c| &c.kind) {
-                    Some(ExprKind::Ident(n)) => format!("`{n}`"),
+                    Some(ExprKind::Ident(n)) => format!("\"{n}\""),
                     _ => "this value".to_string(),
                 };
-                Err(self.error(
+                Err(self.err(
+                    "LIP2008",
                     format!("{what} is {}, not a function", with_article(&other.type_name())),
                     callee.map_or(span, |c| c.span),
                     Some("Only functions can be called with ( ).".into()),
@@ -1127,9 +1221,10 @@ impl Interpreter {
 
     fn call_function(&mut self, c: &Rc<Closure>, pos: Vec<Value>, named: Vec<(String, Value)>, span: Span) -> Result<Value, Flow> {
         let decl = c.decl.clone();
-        let fname = || if decl.is_lambda { "this function".to_string() } else { format!("`{}`", decl.name.text) };
+        let fname = || if decl.is_lambda { "this function".to_string() } else { format!("\"{}\"", decl.name.text) };
         if self.depth >= MAX_DEPTH {
-            return Err(self.error(
+            return Err(self.err(
+                "LIP5005",
                 format!("too much recursion: {} called itself too many times", fname()),
                 span,
                 Some("Make sure the recursion has a case where it stops calling itself.".into()),
@@ -1138,7 +1233,8 @@ impl Interpreter {
         let params = &decl.params;
         if pos.len() > params.len() {
             let n = params.len();
-            return Err(self.error(
+            return Err(self.err(
+                "LIP2003",
                 format!("{} takes {n} argument{}, but {} were given", fname(), if n == 1 { "" } else { "s" }, pos.len()),
                 span,
                 Some(format!("It is defined as {}.", Self::signature(&decl))),
@@ -1149,22 +1245,21 @@ impl Interpreter {
         for (n, v) in named {
             match params.iter().position(|p| p.name.text == n) {
                 Some(i) if values[i].is_some() => {
-                    return Err(self.error(format!("the argument `{n}` was given twice"), span, None));
+                    return Err(self.err("LIP2003", format!("the argument \"{n}\" was given twice"), span, None));
                 }
                 Some(i) => values[i] = Some(v),
                 None => {
-                    let hint = suggest::closest(&n, params.iter().map(|p| p.name.text.as_str()))
-                        .map(|s| format!("Did you mean `{s}`?"))
-                        .unwrap_or_else(|| format!("It is defined as {}.", Self::signature(&decl)));
-                    return Err(self.error(format!("{} has no parameter named `{n}`", fname()), span, Some(hint)));
+                    let hint = suggest::did_you_mean(&n, params.iter().map(|p| p.name.text.as_str())).unwrap_or_else(|| format!("It is defined as {}.", Self::signature(&decl)));
+                    return Err(self.err("LIP1007", format!("{} has no parameter named \"{n}\"", fname()), span, Some(hint)));
                 }
             }
         }
         for (i, p) in params.iter().enumerate() {
             match &values[i] {
                 None if p.default.is_none() => {
-                    return Err(self.error(
-                        format!("missing argument `{}` for {}", p.name.text, fname()),
+                    return Err(self.err(
+                        "LIP2003",
+                        format!("missing argument \"{}\" for {}", p.name.text, fname()),
                         span,
                         Some(format!("It is defined as {}.", Self::signature(&decl))),
                     ));
@@ -1172,10 +1267,11 @@ impl Interpreter {
                 Some(v) => {
                     if let Some(t) = &p.ty {
                         if !self.matches_type(v, t) {
-                            return Err(self.error(
-                                format!("`{}` should be {}, but this is {}", p.name.text, with_article(&t.to_string()), with_article(&v.type_name())),
+                            return Err(self.err(
+                                "LIP2004",
+                                format!("\"{}\" should be {}, but this is {}", p.name.text, with_article(&t.to_string()), with_article(&v.type_name())),
                                 span,
-                                Some(format!("{} expects `{}` to be {t}.", fname(), p.name.text)),
+                                Some(format!("{} expects \"{}\" to be {t}.", fname(), p.name.text)),
                             ));
                         }
                     }
@@ -1215,7 +1311,8 @@ impl Interpreter {
             };
             if let Some(t) = &decl.ret {
                 if !self.matches_type(&value, t) {
-                    return Err(self.error(
+                    return Err(self.err(
+                        "LIP2007",
                         format!("{} should return {}, but it returned {}", fname(), with_article(&t.to_string()), with_article(&value.type_name())),
                         t.span,
                         Some(format!("The definition says it returns {t}.")),
@@ -1244,8 +1341,9 @@ impl Interpreter {
         let tname = &decl.name.text;
         let field_list = || decl.fields.iter().map(|f| f.name.text.as_str()).collect::<Vec<_>>().join(", ");
         if pos.len() > decl.fields.len() {
-            return Err(self.error(
-                format!("`{tname}` has {} field{}, but {} values were given", decl.fields.len(), if decl.fields.len() == 1 { "" } else { "s" }, pos.len()),
+            return Err(self.err(
+                "LIP2003",
+                format!("\"{tname}\" has {} field{}, but {} values were given", decl.fields.len(), if decl.fields.len() == 1 { "" } else { "s" }, pos.len()),
                 span,
                 Some(format!("Its fields are: {}", field_list())),
             ));
@@ -1256,10 +1354,8 @@ impl Interpreter {
             match decl.fields.iter().position(|f| f.name.text == n) {
                 Some(i) => values[i] = Some(v),
                 None => {
-                    let hint = suggest::closest(&n, decl.fields.iter().map(|f| f.name.text.as_str()))
-                        .map(|s| format!("Did you mean `{s}`?"))
-                        .unwrap_or_else(|| format!("Its fields are: {}", field_list()));
-                    return Err(self.error(format!("`{tname}` has no field `{n}`"), span, Some(hint)));
+                    let hint = suggest::did_you_mean(&n, decl.fields.iter().map(|f| f.name.text.as_str())).unwrap_or_else(|| format!("Its fields are: {}", field_list()));
+                    return Err(self.err("LIP1007", format!("\"{tname}\" has no field \"{n}\""), span, Some(hint)));
                 }
             }
         }
@@ -1276,8 +1372,9 @@ impl Interpreter {
                     }
                     None if matches!(f.ty.as_ref().map(|t| &t.kind), Some(TypeKind::Optional(_))) => Value::Nil,
                     None => {
-                        return Err(self.error(
-                            format!("missing `{}` when creating {}", f.name.text, with_article(tname)),
+                        return Err(self.err(
+                            "LIP2003",
+                            format!("missing \"{}\" when creating {}", f.name.text, with_article(tname)),
                             span,
                             Some(format!("For example: {tname}({}: ...)", f.name.text)),
                         ))
@@ -1289,46 +1386,62 @@ impl Interpreter {
             }
             fields.insert(f.name.text.clone(), v);
         }
-        Ok(Value::Object(Rc::new(ObjectData { fields: RefCell::new(fields), ty: Some(t.clone()), module: None })))
+        Ok(Value::Object(Rc::new(ObjectData { fields: RefCell::new(fields), ty: Some(t.clone()), module: None, tag: None, payload: None })))
     }
 
     // ----- modules ---------------------------------------------------------
 
-    fn import(&mut self, source: &str, span: Span) -> Result<Value, Flow> {
-        let is_path = source.starts_with('.') || source.starts_with('/') || source.ends_with(".lipi") || source.contains('\\');
-        if !is_path {
-            if builtins::MODULES.contains(&source) {
-                if let Some(v) = self.globals.get(source) {
-                    return Ok(v);
-                }
-            }
-            let root = self.project_root.join("lipi_modules");
-            let candidates = [root.join(source).join("main.lipi"), root.join(format!("{source}.lipi"))];
-            if let Some(found) = candidates.iter().find(|p| p.is_file()) {
-                let found = found.clone();
-                return self.load_module(&found, span);
-            }
-            return Err(self.error(
-                format!("I couldn't find the package `{source}`"),
-                span,
-                Some(format!(
-                    "Packages go in the lipi_modules folder (`lipi install` arrives in Lipi 0.5). To use one of your own files, import it by path: import \"./{source}.lipi\""
-                )),
-            ));
-        }
+    /// Resolve `use <source>`.
+    ///
+    /// - A path (`"./helpers.lipi"`, `"../lib/x"`) is relative to the current file.
+    /// - A name (`math`, `utils.strings`) is looked up, in order, as a project file
+    ///   next to the current file or in `src/`, then as a package in
+    ///   `lipi_modules/`, then as a standard module. A name that matches both a
+    ///   project file and a package is an error.
+    fn use_module(&mut self, source: &str, span: Span) -> Result<Value, Flow> {
+        let is_path = source.starts_with('.') || source.starts_with('/') || source.ends_with(".lipi") || source.contains(['/', '\\']);
         let base = Path::new(&*self.file).parent().map(Path::to_path_buf).unwrap_or_default();
-        let mut path = base.join(source);
-        if path.extension().is_none_or(|e| e != "lipi") {
-            path = PathBuf::from(format!("{}.lipi", path.to_string_lossy()));
+        if is_path {
+            let mut path = base.join(source);
+            if path.extension().is_none_or(|e| e != "lipi") {
+                path = PathBuf::from(format!("{}.lipi", path.to_string_lossy()));
+            }
+            if !path.is_file() {
+                return Err(self.err(
+                    "LIP3001",
+                    format!("module not found: \"{}\"", path.to_string_lossy()),
+                    span,
+                    Some(format!("Paths in `use` are relative to the file that uses them ({}).", self.file)),
+                ));
+            }
+            return self.load_module(&path, span);
         }
-        if !path.is_file() {
-            return Err(self.error(
-                format!("I couldn't find the file `{}`", path.to_string_lossy()),
+        let rel = format!("{}.lipi", source.replace('.', "/"));
+        let local = [base.join(&rel), self.project_root.join("src").join(&rel)].into_iter().find(|p| p.is_file());
+        let root = self.project_root.join("lipi_modules");
+        let package = [root.join(source).join("main.lipi"), root.join(format!("{source}.lipi"))].into_iter().find(|p| p.is_file());
+        match (local, package) {
+            (Some(l), Some(p)) => Err(self.err(
+                "LIP3004",
+                format!("\"{source}\" matches both a project file and a package"),
                 span,
-                Some(format!("Import paths are relative to the file that imports them ({}).", self.file)),
-            ));
+                Some(format!("Found {} and {}. Rename your file, or use it by path: use \"./{rel}\"", l.display(), p.display())),
+            )),
+            (Some(path), None) | (None, Some(path)) => self.load_module(&path, span),
+            (None, None) => {
+                if builtins::MODULES.contains(&source) {
+                    if let Some(v) = self.globals.get(source) {
+                        return Ok(v);
+                    }
+                }
+                Err(self.err(
+                    "LIP3001",
+                    format!("module not found: \"{source}\""),
+                    span,
+                    Some(format!("Looked for {rel} next to this file and in src/, and for a package in lipi_modules/. Packages install with `lipi install` (coming in LiPi 0.5).")),
+                ))
+            }
         }
-        self.load_module(&path, span)
     }
 
     fn load_module(&mut self, path: &Path, span: Span) -> Result<Value, Flow> {
@@ -1337,37 +1450,40 @@ impl Interpreter {
             return Ok(m.clone());
         }
         if self.loading.contains(&canon) {
-            return Err(self.error(
-                format!("circular import: `{}` is already being loaded", path.to_string_lossy()),
+            return Err(self.err(
+                "LIP3002",
+                format!("circular use: \"{}\" is already being loaded", path.to_string_lossy()),
                 span,
-                Some("Two files import each other. Move the shared code into a third file that both import.".into()),
+                Some("Two files use each other. Move the shared code into a third file that both use.".into()),
             ));
         }
         let file: Rc<str> = Rc::from(path.to_string_lossy().as_ref());
         let source = match Self::read_source(path, &file) {
             Ok(s) => s,
-            Err(_) => return Err(self.error(format!("couldn't read `{file}`"), span, None)),
+            Err(_) => return Err(self.err("LIP3001", format!("couldn't read \"{file}\""), span, None)),
         };
         self.loading.push(canon.clone());
         let result = self.run_source(&source, file.clone());
         self.loading.pop();
-        let env = match result {
-            Ok(env) => env,
+        let (env, exported) = match result {
+            Ok(r) => r,
             Err(RunError::Syntax(diag, f)) => return Err(self.module_error(diag, f)),
             Err(RunError::Check(mut diags, f)) => return Err(self.module_error(diags.remove(0), f)),
             Err(RunError::Runtime(t)) => return Err(Flow::Throw(t)),
             Err(RunError::Exit(code)) => return Err(Flow::Exit(code)),
         };
-        let mut names: Vec<(String, Value)> = env
-            .vars
-            .borrow()
-            .iter()
-            .filter(|(k, _)| !k.starts_with('_'))
-            .map(|(k, s)| (k.clone(), s.value.clone()))
-            .collect();
-        names.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut fields = Fields::new();
+        for name in exported {
+            let value = env.vars.borrow().get(&name).map(|s| s.value.clone());
+            match value {
+                Some(v) => {
+                    fields.insert(name, v);
+                }
+                None => return Err(self.err("LIP3005", format!("\"{file}\" exports \"{name}\", but never defines it"), span, None)),
+            }
+        }
         let module_name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-        let value = Value::Object(Rc::new(ObjectData { fields: RefCell::new(names.into_iter().collect()), ty: None, module: Some(module_name) }));
+        let value = Value::Object(Rc::new(ObjectData { fields: RefCell::new(fields), ty: None, module: Some(module_name), tag: None, payload: None }));
         self.modules.insert(canon, value.clone());
         Ok(value)
     }

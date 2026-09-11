@@ -1,17 +1,19 @@
-Hello World
+Hello, LiPi!
 Dezy 25
 Name: Dezy, next year: 26
 Adult
 3.5 1 2 1024
+5.0 5.0 5.0 3000000
 0.30000000000000004
-5
+Integer Decimal Decimal Null
 abcdef
 false true false
 fallback
 true true true
 true true true
 Area: 12.57
+LiPi
 260
 Line one
 Line two with Dezy
-tab	here quote "x" brace {not code}
+tab	here quote "x" brace {not code} single {quotes} stay literal

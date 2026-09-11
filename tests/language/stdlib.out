@@ -1,6 +1,6 @@
 MODULES WORK! 1.0 AGAIN!
-{"name":"Lipi","tags":["simple","powerful"],"year":2026,"ok":true,"none":null}
-powerful true
+{"name":"LiPi","tags":["simple","powerful"],"year":2026,"ok":true,"none":null,"price":19.5}
+powerful true Integer Decimal
 {
   "a": [
     1,
@@ -9,13 +9,13 @@ powerful true
 }
 ["first line", "second line"] true
 false
-4 3 3.14 9 1
+4.0 3 3.14 9 1 1024
 true
 3.1416
 default value
 1970 1 1 thursday
 1970-01-02T00:00:00Z
-[2, 4, nil]
+[2, 4, null]
 true
 caught across async: async failure
-timed out after 20 ms
+timed out after 20 ms LIP4002

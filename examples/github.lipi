@@ -3,26 +3,25 @@
 
 const headers = {"User-Agent": "lipi-example", Accept: "application/vnd.github+json"}
 
-async repo_stars(name)
-    response = await http.get("https://api.github.com/repos/{name}", {headers: headers, timeout: 10000})
+async repoStars(name)
+    response = await http.get("https://api.github.com/repos/" + name, {headers: headers, timeout: 10000})
     if not response.ok
         throw "GitHub answered {response.status} for {name}"
-    data = response.json()
-    return {name: name, stars: data.stargazers_count}
+    return {name: name, stars: response.json().stargazers_count}
 
 repos = ["rust-lang/rust", "python/cpython", "nodejs/node"]
 
 start = time.now()
 try
     # Start all requests first, then wait for all of them together.
-    tasks = repos.map(name => http.get("https://api.github.com/repos/{name}", {headers: headers, timeout: 10000}))
+    tasks = repos.map(name => http.get("https://api.github.com/repos/" + name, {headers: headers, timeout: 10000}))
     responses = await all(tasks)
     for response in responses
         data = response.json()
         show "{data.full_name}: {data.stargazers_count} stars"
     show "Fetched {repos.length} repositories in {time.now() - start} ms"
 
-    one = await repo_stars("denoland/deno")
+    one = await repoStars("denoland/deno")
     show "{one.name}: {one.stars} stars"
 catch err
-    show "Couldn't fetch: {err.message}"
+    show "Couldn't fetch: " + err.message

@@ -1,0 +1,7 @@
+ERROR LIP3003: module "_helpers" doesn't export "secretHelper"
+
+tests/language/error_module_export.lipi:2:14
+    show helpers.secretHelper()
+                 ^^^^^^^^^^^^
+
+Hint: If "secretHelper" is defined in _helpers.lipi, add: export secretHelper

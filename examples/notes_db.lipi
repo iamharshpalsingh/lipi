@@ -1,0 +1,56 @@
+# The notes API from api_server.lipi, stored in a SQLite database (notes.db).
+#
+#   lipi examples/notes_db.lipi
+#   curl -X POST localhost:3000/signup -d '{"email":"a@b.c","password":"secret123"}'
+#   curl -X POST localhost:3000/login  -d '{"email":"a@b.c","password":"secret123"}'
+#   curl -X POST localhost:3000/notes  -H "Authorization: Bearer <token>" -d '{"text":"hello"}'
+#   curl localhost:3000/notes -H "Authorization: Bearer <token>"
+
+db = database.open("notes.db")
+server.start 3000
+
+currentUser(request)
+    token = request.headers.get("authorization", "").replace("Bearer ", "")
+    session = db.sessions.find(token: token)
+    return session?.email
+
+post "/signup" with request
+    data = request.json()
+    email = data.get("email", "")
+    password = data.get("password", "")
+    if email == "" or password.length < 8
+        return server.respond(422, {error: "email and a password of at least 8 characters are required"})
+    if db.users.find(email: email) != null
+        return server.respond(409, {error: "that email is already registered"})
+    db.users.create({email: email, passwordHash: crypto.hashPassword(password)})
+    return server.respond(201, {email: email})
+
+post "/login" with request
+    data = request.json()
+    user = db.users.find(email: data.get("email", ""))
+    if user == null or not crypto.verifyPassword(data.get("password", ""), user.passwordHash)
+        return server.respond(401, {error: "wrong email or password"})
+    token = crypto.randomToken()
+    db.sessions.create({token: token, email: user.email})
+    return {token: token}
+
+get "/notes" with request
+    email = currentUser(request)
+    if email == null
+        return server.respond(401, {error: "log in first"})
+    return db.notes.where(owner: email, order: "-id")
+
+post "/notes" with request
+    email = currentUser(request)
+    if email == null
+        return server.respond(401, {error: "log in first"})
+    note = db.notes.create({owner: email, text: request.json().get("text", "")})
+    return server.respond(201, note)
+
+delete "/notes/:id" with request
+    email = currentUser(request)
+    note = db.notes.find(toInteger(request.params.id))
+    if note == null or note.owner != email
+        return server.respond(404, {error: "no such note"})
+    db.notes.delete(note.id)
+    return null

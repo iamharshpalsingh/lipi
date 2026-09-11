@@ -1,137 +1,152 @@
-# Lipi Language Specification — Draft 0.2
+# LiPi Language Specification — v0.1 baseline (implementation 0.3-dev)
 
+> **LiPi** — Unified Development Language. *Ancient roots. Modern code.*
 > Easy to start. Hard to outgrow.
 
-This is the working specification for Lipi 0.x. It describes what the
-reference implementation (this repository) actually does. 0.x versions may
-still change; the grammar freezes at 1.0 with a compatibility policy.
+This document records what the reference implementation in this repository
+actually does. It follows the *LiPi v0.1 Complete Language Specification and
+Implementation Plan*. Where that plan left a choice open, the choice made here
+is listed in [§19 Decisions](#19-decisions-taken-where-the-plan-left-a-choice).
+Every rule here is covered by the golden tests in `tests/language/`.
 
 ---
 
 ## 1. Source files
 
-- Extension `.lipi`, UTF-8 text.
-- **Indentation defines blocks.** Use 4 spaces per level (a tab counts as 4).
-  A line that is more indented than the one before starts a block; returning
-  to an earlier indentation ends it.
-- Comments start with `#` and run to the end of the line.
-- Inside `( )`, `[ ]` and `{ }`, newlines and indentation are ignored, so
-  long lists, objects and calls can span several lines.
-- A line starting with `.` continues the previous line (method chains):
-
-  ```lipi
-  names = people
-      .filter(p => p.age >= 18)
-      .map(p => p.name)
-  ```
-
-- No semicolons and no `{ }` blocks.
+- UTF-8 text with the `.lipi` extension.
+- **Newlines and indentation are significant.** A block is the set of lines
+  indented deeper than the line that opens it. Use 4 spaces per level (a tab
+  counts as 4; the future formatter will normalise tabs).
+- `#` starts a comment that runs to the end of the line.
+- Inside `( )`, `[ ]` and `{ }`, newlines and indentation are ignored.
+- A line starting with `.` continues the previous one (method chains).
+- There are no semicolons and no `{ }` blocks.
 
 ## 2. Names and keywords
 
-Names (identifiers) start with a letter or `_` and contain letters, digits and
-`_`. Any Unicode letter works, including Devanagari: `नाम = "Lipi"`.
-Convention: `snake_case` for variables and functions, `PascalCase` for types,
-`UPPER_CASE` for constants.
+**Identifiers** start with an ASCII letter or `_` and continue with ASCII
+letters, digits or `_`: `name`, `user_name`, `_product`, `price2`. Unicode
+letters are allowed in strings and comments but not in names (v0.1 rule).
 
-**Reserved keywords:**
+**Naming conventions:** `camelCase` for variables and functions, `PascalCase`
+for types, 4-space indentation. The standard library follows these conventions.
 
-```
-if else for in while repeat break continue return
-and or not true false nil const import async await
-try catch finally throw match show
-```
+**Keywords:**
 
-**Contextual words** (only special in one position, usable as names elsewhere):
-`to`, `step` (ranges), `as`, `from` (imports), `when` (match), `type`
-(type definitions), `test` (test blocks), `self` (inside methods), `_`
-(match wildcard).
+| Keyword | Purpose |
+|---|---|
+| `if` `else` | conditions |
+| `for` `in` `while` `repeat` `break` `continue` | loops, membership |
+| `function` | optional function-definition keyword |
+| `return` | return a value |
+| `const` | constant binding |
+| `use` `from` `as` `export` | modules |
+| `async` `await` | asynchronous code |
+| `try` `catch` `finally` `throw` | errors |
+| `match` | pattern matching |
+| `and` `or` `not` | Boolean logic |
+| `true` `false` `null` | literals |
+| `show` | print a line |
 
-## 3. Values
+**Reserved for future use** (can't be used as names): `state`, `route`,
+`component`, `server` (`server` is also the built-in web server module).
 
-| Type       | Examples                        | Notes |
-|------------|---------------------------------|-------|
-| `nil`      | `nil`                           | "no value" |
-| `bool`     | `true`, `false`                 | |
-| `number`   | `42`, `3.14`, `1_000_000`, `1e6`, `0xff` | 64-bit floating point. Whole numbers print without `.0` |
-| `string`   | `"Hi {name}"`, `'literal'`, `"""multi-line"""` | Immutable Unicode text |
-| `list`     | `[1, 2, 3]`                     | Ordered, mutable, shared by reference |
-| `object`   | `{name: "Dezy", age: 25}`       | Keys keep their order. Mutable, shared by reference |
-| `function` | `add`, `x => x * 2`             | First-class values |
-| `task`     | result of `http.get(...)`, `sleep(100)`, an `async` call | See §11 |
-| user types | `Point(1, 2)`                   | See §9 |
+**Contextual words**, special only in one position: `to` and `step` (ranges),
+`with` (trailing blocks), `type` (type definitions), `test` (test blocks),
+`self` (inside methods), and `_` (the match wildcard).
 
-**Truthiness:** only `nil` and `false` are false. `0`, `""` and `[]` are true.
-Check emptiness explicitly with `.is_empty()`.
+## 3. Values and types
 
-**Equality** (`==`) compares by content: `[1, 2] == [1, 2]` is `true`.
-Values of different types are never equal (`1 == "1"` is `false`). Nothing is
-converted behind your back.
+| Type | Examples | Notes |
+|---|---|---|
+| `Integer` | `10`, `-5`, `1_000_000`, `0xff` | 64-bit. Overflow is an error (LIP5009) |
+| `Decimal` | `10.5`, `1e3` | 64-bit floating point. Printed with a fraction: `5.0` |
+| `String` | `"hi {name}"`, `'literal'`, `"""multi-line"""` | immutable UTF-8 |
+| `Boolean` | `true`, `false` | |
+| `Null` | `null` | "no value" |
+| `Array` | `[1, 2, 3]` | ordered, zero-based, mutable, shared by reference |
+| `Object` | `{name: "A", age: 25}` | String keys, insertion order, mutable |
+| `Function` | `add`, `x => x * 2` | first-class |
+| `Task` | `http.get(url)`, `sleep(100)` | result of async work (§11) |
+| user types | `Point(1, 2)` | §9 |
+
+`Number` is used in annotations to mean "Integer or Decimal". `Any` accepts
+everything.
+
+### 3.1 Numeric model
+
+- Integer `+ - * % **` Integer → Integer (checked: overflow is an error).
+  `**` with a negative exponent gives a Decimal.
+- **`/` always produces a Decimal**: `10 / 4` is `2.5` and `10 / 2` is `5.0`.
+  For whole-number division, use `math.floor(a / b)`, which returns an Integer.
+- Any operation involving a Decimal produces a Decimal.
+- `%` takes the sign of the divisor: `-7 % 3 == 2`.
+- Dividing by zero (`/` or `%`) is an error (LIP5002), never `infinity`.
+- Integers and Decimals compare by value: `5 == 5.0` is `true`.
+- Array and String positions must be Integers.
+
+### 3.2 Conditions are strict
+
+`if`, `while`, `not`, `and`, `or`, inline `if … else`, `match` guards and
+test callbacks (`filter`, `find`, `any`, `all`, `count`) require a real
+`Boolean`. `if items` is an error (LIP2005) with a hint to write
+`if not items.isEmpty()`. `and` and `or` short-circuit and return a Boolean.
+
+### 3.3 Equality
+
+`==` compares by content: `[1, 2] == [1, 2]` and `{a: 1} == {a: 1}`.
+Different types are never equal (`1 == "1"` is `false`).
 
 ## 4. Strings
 
-- **Double quotes interpolate:** `"Total: {price * qty}"`. Any expression can
-  go inside `{ }`.
+- **Double quotes interpolate:** `"Total: {price * qty}"`.
 - **Single quotes are literal:** `'{"a": 1}'`, which is handy for JSON.
-- **Triple quotes** (`"""` or `'''`) span lines. A newline right after the
+- **Triple quotes** (`"""` / `'''`) span lines. A newline right after the
   opening quotes is dropped.
 - Escapes: `\n \t \r \\ \" \' \{ \} \0 \u{1F600}`.
+- `+` joins two Strings. `"Age: " + 5` is an error: use interpolation or
+  `toString`.
 
-## 5. Variables
+## 5. Variables and constants
 
 ```lipi
-name = "Dezy"              # create or update
-age: number = 25           # with a declared type (checked from then on)
-const PI = 3.14159         # can never be reassigned
-count += 1                 # also -=, *=, /=
+name = "Dezy"                 # create or update
+age: Integer = 25             # with a declared type, checked on every assignment
+const appName = "LiPi"        # can never be reassigned (LIP1003)
+count += 1                    # also -=, *=, /=
 ```
 
-**Scope rules:**
+**Scope:** variables belong to the function (or file) that creates them.
+Blocks (`if`, `for`, …) don't create a new scope. Assigning to a name updates
+the nearest existing variable in an enclosing function or file. Otherwise it
+creates a local variable in the current function; it never creates a hidden
+global. Loop variables, parameters and `catch` names are local. Closures
+capture variables by reference.
 
-- Variables belong to the **function** (or file) that creates them. `if`,
-  `for`, `while` and other blocks do not create a new scope.
-- Assigning to a name **updates the nearest existing variable** in an
-  enclosing function or file. Otherwise it **creates** a new variable in the
-  current function. That is why closures can update captured variables:
-
-  ```lipi
-  make_counter()
-      count = 0
-      increment()
-          count += 1
-          return count
-      return increment
-  ```
-
-- Loop variables, parameters and `catch` names are always local.
-- Built-in names (`show`, `math`, ...) can be shadowed but never overwritten
-  globally.
+**Evaluation order** is left to right: the receiver, then the arguments in
+order, then the call.
 
 ## 6. Operators
 
 From lowest to highest precedence:
 
-| Precedence | Operators | Notes |
+| # | Operators | Notes |
 |---|---|---|
-| 1 | `a if cond else b`, `x => ...` | inline choice, lambda |
-| 2 | `??` | `a ?? b` is `a` unless `a` is `nil` |
-| 3 | `or` | returns the first true operand (or the last one) |
-| 4 | `and` | returns the first false operand (or the last one) |
+| 1 | `a if cond else b`, `x => …` | inline choice, lambda |
+| 2 | `??` | `a ?? b` is `a` unless `a` is `null` |
+| 3 | `or` | Booleans only |
+| 4 | `and` | Booleans only |
 | 5 | `not` | |
-| 6 | `== != < > <= >= in` `not in` | comparisons don't chain: write `0 < x and x < 10` |
-| 7 | `a to b`, `a to b step s` | inclusive range |
-| 8 | `+ -` | `+` also joins two strings or two lists |
-| 9 | `* / %` | `%` has the sign of the divisor (`-7 % 3 == 2`) |
+| 6 | `== != < > <= >= in` `not in` | comparisons don't chain: use `and` |
+| 7 | `a to b`, `a to b step s` | inclusive Integer range |
+| 8 | `+ -` | |
+| 9 | `* / %` | |
 | 10 | unary `-`, `await` | |
-| 11 | `**` | power, right-associative |
-| 12 | `f(x)`, `a.b`, `a?.b`, `a[i]` | call, field, optional field, index |
+| 11 | `**` | right-associative |
+| 12 | `f(x)` `a.b` `a?.b` `a[i]` | call, field, optional field, index |
 
-- Arithmetic works on numbers only. `"a" + 1` is an error with a hint to use
-  interpolation or `to_number`.
-- Dividing by zero is an error, not `infinity`.
-- `in` checks list membership, substrings, and object keys.
-- `a?.b` gives `nil` instead of an error when `a` is `nil` (or when `a` is a
-  field missing from a plain object).
+`a?.b` gives `null` instead of an error when `a` is `null`, or when `a` is a
+field missing from a plain Object.
 
 ## 7. Control flow
 
@@ -149,245 +164,390 @@ while count < 10
 repeat 3
     show "hip hip"
 
-for item in items            # list items
+for item in items            # Array items
 for i, item in items         # position and item
 for letter in "hello"        # characters
-for key in user              # object keys
-for key, value in user       # object keys and values
-for n in 1 to 10             # 1, 2, ... 10 (inclusive)
-for n in 10 to 0 step -2     # 10, 8, ... 0
+for key, value in user       # Object keys and values
+for n in 1 to 10             # 1 … 10
+for n in 10 to 0 step -2     # 10, 8, … 0
 
-break / continue             # inside loops
-
-match command
-    when "start", "go"
-        run()
-    when 1 to 9              # numeric range
+match status
+    "paid"
+        show "Complete"
+    "pending", "new"         # several patterns
+        show "Waiting"
+    1 to 9                   # Integer range pattern
         show "small"
-    when _ if verbose        # `if` after the patterns adds a guard
-        show "verbose mode"
-    when _                   # anything
-        show "other"
+    _ if verbose             # `_` matches anything; `if` adds a guard
+        show "verbose"
     else
-        show "no case matched"
+        show "Unknown"
 ```
 
-`match` compares with `==` and runs the first matching `when`.
+`match` compares with `==` and runs the first case that matches.
 
 ## 8. Functions
 
-A function is defined by its name, its parameters and an indented body. There
-is no keyword.
-
 ```lipi
-add(a, b)
+add(a, b)                        # compact definition
     return a + b
 
-greet(name = "friend", greeting: string = "Hello") -> string
+function sub(a, b)               # the same, with the optional keyword
+    return a - b
+
+greet(name = "friend", greeting: String = "Hello") -> String
     return "{greeting}, {name}!"
 
-greet()                                  # "Hello, friend!"
-greet("Asha")                            # positional
-greet(greeting: "Namaste", name: "Ravi") # named arguments
+greet(greeting: "Namaste", name: "Ravi")   # named arguments
 ```
 
-- **Definition or call?** `name(params)` followed by an indented block is a
-  definition. On its own line it's a call.
-- Functions are **hoisted**: you can call a function defined later in the same
-  file or function.
-- Without `return`, a function returns `nil`.
-- Parameters may have defaults (evaluated at call time) and declared types.
-  A return type is written as `-> type`.
-- Calling with too many or too few arguments, or with an unknown named
-  argument, is an error.
-- **Lambdas:** `x => x * 2`, `(a, b) => a + b`, `() => 42`. Their body is a
-  single expression.
-- **Callbacks** passed to built-ins receive only the arguments they declare:
-  `items.map(x => x * 2)` and `items.map((x, i) => x * i)` both work.
-- Recursion is limited to 5000 nested calls, and running out reports the
-  function that recursed.
+- `name(params)` followed by an indented block is a definition. On its own
+  line, it's a call.
+- Functions are hoisted within their file or function.
+- Without `return`, a function returns `null`.
+- Too many or too few arguments, unknown named arguments and wrong declared
+  types are errors, reported before the program runs when the checker can see
+  them.
+- **Lambdas:** `x => x * 2`, `(a, b) => a + b`. Callbacks receive only the
+  arguments they declare, so `items.map(x => …)` and `items.map((x, i) => …)`
+  both work.
+- **Calls without parentheses** at the start of a line: `server.start 3000`,
+  `checkout payment`.
+- **Trailing blocks:** a call followed by an indented block passes the block as
+  a function in its last argument. `with` names the block's inputs:
+
+  ```lipi
+  get "/users/:id" with request
+      return {id: request.params.id}
+
+  payment.on "success"
+      show "paid"
+  ```
+- Recursion is limited to 5000 nested calls (LIP5005).
 
 ## 9. Types
 
 ```lipi
 type User
-    name: string
-    age: number = 0
-    email: string? 
+    name: String
+    age: Integer = 0
+    email: String?
 
     greet()
-        return "Hi, I'm {self.name}"
+        return "Hi, I'm " + self.name
 
 u = User("Dezy", 25)
-v = User(name: "Asha")        # age defaults to 0, email to nil
-show u.greet()
+v = User(name: "Asha")
 ```
 
-- Fields: `name: type`, `name = default` or `name: type = default`. A field
-  with an optional type (`string?`) defaults to `nil`. Other fields without a
-  default are required.
-- Create an instance by calling the type with positional (field order) or
-  named arguments.
-- Methods see the instance as `self`.
-- Setting an undeclared field, or a value of the wrong declared type, is an
-  error.
-- Generics, interfaces/traits and inheritance are future work (see the roadmap).
+A field is required unless it has a default or a nullable type (`T?`). Methods
+see the instance as `self`. Setting an undeclared field is an error.
+Inheritance, generics and traits aren't in v0.1.
 
 ## 10. Errors
 
 ```lipi
 try
-    data = json.parse(text)
+    user = database.users.find(id: 123)
 catch error
-    show "Bad input: {error.message}"
+    show error.message
 finally
     show "done"
 
-throw "something went wrong"          # error with this message
-throw {message: "not found", code: 404}
+throw "something went wrong"
+throw {message: "not found", status: 404}
 ```
 
-- A caught error is an object with `message`, `hint`, `line` and `file`. If
-  you throw an object, you catch that same object.
-- An uncaught error stops the program and prints the message, the source line
-  with a marker, a hint and the chain of calls that led there.
+A runtime error is a structured Object with these fields: `message`, `code`
+(for example `"LIP5001"`), `category` (for example `"Runtime"`), `hint`,
+`line` and `file`. If you throw an Object, `catch` receives that Object. An
+unhandled error stops the program and prints a diagnostic (§16) and the call
+chain.
 
-## 11. Async
+## 11. Async / await
 
 ```lipi
-async load_user(id)
+async getUser(id)
     response = await http.get("https://api.example.com/users/{id}")
     return response.json()
 
-user = await load_user(7)
+user = await getUser(123)
 ```
 
-- Slow operations (`http.*`, `sleep`) return a **task** immediately and run in
-  the background. `await task` waits for the result and rethrows any error.
-- Start several tasks, then wait for all of them together:
-  `results = await all([task1, task2])`.
-- `await timeout(task, 5000)` fails with "timed out" after 5 seconds.
-- `task.cancel()` cancels a task and `task.is_done()` checks it without waiting.
-- `await` works at the top of a file and inside any function.
-- *0.2 behaviour:* calling an `async` function runs its body right away and
-  returns a finished task. Background I/O inside it still overlaps with other
-  tasks. A full cooperative scheduler is planned.
+- `await` is allowed at the top level of a file, inside `async` functions,
+  and inside lambdas and trailing blocks (which take on their surroundings'
+  context). Anywhere else it's error LIP4001, *await used outside async context*.
+- Slow operations (`http.*`, `sleep`) return a Task right away and run in the
+  background. `await task` waits for it and rethrows its errors.
+- `await all([t1, t2])` waits for several tasks.
+  `await timeout(task, ms)` fails with LIP4002.
+  `task.cancel()` and `task.isDone()` also work.
+- *Implementation note:* calling an `async` function runs its body right away
+  and returns a finished Task. I/O inside it still runs in the background. A
+  cooperative scheduler is planned.
 
 ## 12. Modules
 
 ```lipi
-import "./math_utils.lipi"               # available as math_utils
-import "./math_utils.lipi" as mu
-from "./math_utils.lipi" import add, PI
-import payments                          # package from lipi_modules/
+# math.lipi
+add(a, b)
+    return a + b
+export add
+
+# main.lipi
+use math                         # binds `math`
+show math.add(10, 20)
+
+use "./lib/helpers.lipi" as h    # an explicit relative path
+from math use add                # bind names directly
 ```
 
-- Paths are relative to the importing file, and `.lipi` is optional.
-- A module exports every top-level name that doesn't start with `_`.
-- Each module runs once. Later imports reuse the result, and circular imports
-  are reported as errors.
-- The standard modules (`math`, `json`, `fs`, `env`, `http`, `time`,
-  `process`) are always available with no import.
+- **Members are private by default.** `export name, …` makes them public, and
+  so does `export` in front of a definition (`export add(a, b)`,
+  `export const limit = 3`, `export type User`). `export` is only allowed at
+  the top level of a file.
+- **Resolution** is deterministic. A path (anything with `/`, starting with
+  `.` or ending in `.lipi`) is relative to the file that uses it. A bare name
+  such as `use math` or `use utils.strings` is looked up in this order:
+  1. `math.lipi` next to the current file,
+  2. `src/math.lipi` in the project (the folder with `lipi.json`),
+  3. the package `lipi_modules/math/`,
+  4. the standard module `math`.
 
-## 13. Gradual typing
+  A name that matches both a project file and a package is error LIP3004.
+- Each module runs once, and circular `use` is error LIP3002. Using a name a
+  module doesn't export is error LIP3003.
+- The standard modules (`math json fs env http time process server crypto`)
+  are always available with no `use`.
 
-Types are optional. Add them where they help:
+## 13. Gradual type system
 
 ```lipi
-age = 25                      # inferred
-name: string = "Dezy"         # declared
-scores: list[number] = [90, 85]
-nickname: string? = nil       # optional: string or nil
-total(prices: list) -> number
+age = 25                        # inferred: Integer
+name: String = "Dezy"           # annotated
+scores: Array[Integer] = [90]   # also [Integer]
+nickname: String? = null        # nullable
+total(prices: Array) -> Decimal
 ```
 
-Type names: `number string bool nil any list object function task`, a user
-type name, `list[T]` (or `[T]`) and `T?`.
+Type names: `Integer Decimal Number String Boolean Null Array Object Function
+Task Any`, user types, `Array[T]`/`[T]` and `T?`. Lowercase names are an error
+with a hint (`type names are capitalized: "String"`).
 
-**Before running**, `lipi run` and `lipi check` report mistakes that are
-certain to fail:
-
-- unknown names (with "did you mean")
-- operations on the wrong types, such as `"twenty" + 10`
-- a value that doesn't match a declared type
-- wrong argument counts, unknown named arguments and argument types for known
-  functions
-- reassigning a constant
-- `return` outside a function, `break` outside a loop
-- unknown members of text, lists and numbers (`items.lenght`)
-- unknown type names
-
-The checker is conservative: when it can't be sure, it leaves the check to
-runtime. Declared types are always enforced at runtime too.
+**Before running**, `lipi run` and `lipi check` report every error they can
+prove: undefined names, type mismatches in operators and assignments,
+non-Boolean conditions, argument count and type errors for known functions,
+constant reassignment, duplicate definitions, misplaced
+`return`/`break`/`continue`/`await`/`export`, unknown members of Strings,
+Arrays and numbers, and unknown type names. When it can't be sure, the checker
+leaves the check to the runtime. Declared types are always enforced at runtime
+as well.
 
 ## 14. Testing
 
-Files ending in `_test.lipi` can contain test blocks:
+Files ending in `_test.lipi` can contain:
 
 ```lipi
 test "adds numbers"
-    assert_equal(add(2, 3), 5)
+    assertEqual(add(2, 3), 5)
     assert(add(1, 1) > 1, "should be bigger")
 ```
 
-`lipi test` finds and runs them and reports passes and failures.
+`lipi test [path]` runs them.
 
 ## 15. Standard library
 
-**Global functions:** `to_number(x)` (returns `nil` if the text isn't a number),
-`to_string(x)`, `type_of(x)`, `input(prompt)`, `assert(cond, message)`,
-`assert_equal(actual, expected)`, `sleep(ms)`, `all(tasks)`,
-`timeout(task, ms)`.
+**Global functions:** `toNumber toInteger toDecimal toString typeOf input
+assert assertEqual sleep all timeout`. The route functions `get post put patch
+delete` are also global.
 
 | Module | Members |
 |---|---|
-| `math` | `pi e infinity sqrt abs floor ceil round(x, digits) pow log(x, base) log10 exp sin cos tan atan2 sign clamp min max random random_int(min, max)` |
+| `math` | `pi e infinity sqrt abs floor ceil round(x, digits) pow log(x, base) log10 exp sin cos tan atan2 sign clamp min max random randomInt(min, max)` |
 | `json` | `parse(text)`, `stringify(value, pretty: true)` |
-| `fs` | `read write append exists is_dir list make_dir delete` |
-| `env` | `get(name, default)`, `has(name)`, `all()`, `load(".env")` |
-| `http` | `get(url, options)`, `delete(url, options)`, `post/put/patch(url, body, options)`, `request({...})`. Options: `headers`, `timeout` (ms), `query`. The response has `status ok headers body url json()` |
-| `time` | `now()` (ms since 1970), `date(ms)`, `iso(ms)` (UTC) |
-| `process` | `args`, `platform`, `exit(code)`, `cwd()`, `run(command)` → `{code, output, error}` |
+| `fs` | `read write append exists isDir list makeDir delete` |
+| `env` | `get(name, default) has all load(".env")` |
+| `http` | `get(url, options) delete(url, options) post/put/patch(url, body, options) request({...})`. Options: `headers timeout query`. A response has `status ok headers body url json()` |
+| `time` | `now()` (Integer ms since 1970), `date(ms)`, `iso(ms)` |
+| `process` | `args platform exit(code) cwd() run(command)` |
+| `server` | see §15.1 |
+| `crypto` | `sha256 hmacSha256 hashPassword verifyPassword randomToken(bytes) uuid` |
+| `database` | see §15.2 |
 
-**Text:** `length upper lower trim trim_start trim_end split(sep) contains
-starts_with ends_with replace(old, new) index_of slice(start, end) repeat(n)
-chars lines is_empty pad_start(width, fill) pad_end reverse to_number`
+**String:** `length upper lower trim trimStart trimEnd split contains
+startsWith endsWith replace indexOf slice repeat chars lines isEmpty padStart
+padEnd reverse toNumber`
 
-**Lists** (the first five change the list, the rest return new values):
-`push pop insert(pos, item) remove_at(pos) remove(item)`, `length first last
-contains index_of join(sep) map filter reduce(f, start) each find any all
-count sort sort_by(f) reverse slice sum min max is_empty copy unique flat`.
-Negative positions count from the end: `items[-1]` is the last item.
+**Array** (the first five change the Array): `push pop insert removeAt remove`,
+plus `length first last contains indexOf join map filter reduce each find any
+all count sort sortBy reverse slice sum min max isEmpty copy unique flat`.
+`items[-1]` is the last item.
 
-**Objects:** `keys values entries has(key) get(key, default) remove(key) copy
-is_empty length`. `obj.field` is an error if the field is missing (this
-catches typos). `obj["key"]` and `obj.get("key")` give `nil` instead.
+**Object:** `keys values entries has get(key, default) remove copy isEmpty
+length`. `obj.field` is an error when the field is missing; `obj["key"]` and
+`obj.get("key")` return `null` instead.
 
-**Numbers:** `round(digits) floor ceil abs to_string`
+**Integer/Decimal:** `round(digits) floor ceil abs toString`
 
-## 16. Error-message philosophy
+### 15.1 Web server
 
-Every error message:
+```lipi
+server.start 3000                     # listens on 127.0.0.1; host: "0.0.0.0" to expose
 
-1. says **what went wrong** in plain words ("expected a number", not "TypeError"),
-2. shows the **exact line** with a marker under the problem,
-3. offers a **safe suggestion** in a `Hint:` line,
-4. recognises habits from other languages (`print`, `let`, `&&`, `elif`,
-   `null`, `++`, `//` comments, `===`, curly quotes) and shows the Lipi way.
+server.before with request            # middleware: return a response to stop early
+    if request.headers.get("authorization") == null
+        return server.respond(401, {error: "log in first"})
+
+get "/users/:id" with request         # :param segments, *rest wildcard
+    return {id: request.params.id}    # Objects and Arrays → JSON
+
+post "/users" with request
+    return server.respond(201, request.json())
+
+server.static "/assets", "./public"
+server.websocket "/chat" with socket
+    socket.on "message" with text
+        server.broadcast("/chat", text)
+```
+
+- Requests are served after the rest of the file has run.
+- A request has `method path params query headers cookies form body ip json()`.
+- Return values: an Object or Array is sent as JSON, a String as text (as HTML
+  if it starts with `<`), `null` as `204 No Content`, and
+  `server.respond(status, body, headers)` for full control.
+  `server.redirect(url)` also works.
+- `server.cookie(name, value, {maxAge, secure, httpOnly})` builds a cookie with
+  secure defaults (`HttpOnly; SameSite=Lax; Path=/`).
+- A handler error is logged and answered with `500 {"error": message}`. The
+  server keeps running.
+- Handlers run one at a time on the main thread; connection I/O runs on
+  background threads.
+
+### 15.2 Database (SQLite; PostgreSQL next)
+
+```lipi
+db = database.open("shop.db")              # ":memory:" for a throwaway database
+users = database.users.all()               # the default database: DATABASE_URL, else lipi.db in the project
+
+user = db.users.create({name: "Dezy", age: 25, tags: ["admin"]})   # returns the row, with its id
+db.users.find(123)                         # by id, or null
+db.users.find(email: "a@b.c")              # by fields
+db.users.where(active: true, order: "-age", limit: 10, offset: 20)
+db.users.all(order: "name")
+db.users.count(active: true)
+db.orders.update(order.id, {status: "paid"})   # returns the updated row
+db.users.delete(3)                         # true if a row was deleted
+
+db.query("SELECT * FROM users WHERE age > ?", [18])       # rows as Objects
+db.run("UPDATE users SET age = age + 1 WHERE id = :id", {id: 1})   # {changes, lastId}
+db.transaction(tx => ...)                  # commits, or rolls back when the block fails
+db.migrate("001_create_products", "CREATE TABLE products (...)")   # runs once
+db.tables()
+```
+
+- **Values are always parameters**, never pasted into SQL. Table and column
+  names must be plain identifiers.
+- **Schema grows with your data:** the first `create` makes the table (`id`
+  is an auto-incrementing primary key), and new fields in `create`/`update`
+  add columns. For production schemas, use `migrate`.
+- Storage types: Integer→INTEGER, Decimal→REAL, String→TEXT, Boolean→BOOLEAN
+  (read back as `true`/`false`), Array/Object→JSON (read back as values).
+- Reading a table that doesn't exist yet gives `[]`, `0` or `null`.
+- Database errors are LIP5011 and carry hints (missing table, unique
+  violation, SQL syntax).
+
+## 16. Diagnostics
+
+Every diagnostic has a stable code, a plain-language message, the exact
+location and, where possible, a hint:
 
 ```
-ERROR: expected a number
-  --> main.lipi:2:9
-   |
- 2 | price = age + 10
-   |         ^^^
-Hint: "age" is a string. Convert it with to_number(age), or use a numeric value.
+ERROR LIP1002: undefined variable "usr"
+
+main.lipi:8:10
+    show usr.name
+         ^^^
+
+Hint: did you mean "user"?
 ```
 
-## 17. Not yet specified (planned)
+`lipi check --json` prints diagnostics as JSON for editors and CI.
 
-Generics and interfaces/traits, pattern destructuring, a cooperative async
-scheduler with cancellation tokens, a module visibility keyword, the
-client/server boundary for web code (`page`, `server`), secrets handling, a
-package manifest schema beyond `name`, `version`, `main` and `dependencies`,
-and a formatter's exact layout rules.
+| Range | Class | Codes |
+|---|---|---|
+| LIP0xxx | Syntax | 0001 unexpected token · 0002 indentation · 0003 string · 0004 invalid character · 0005 missing block · 0006 invalid assignment target · 0007 number literal · 0008 habit from another language |
+| LIP1xxx | Name | 1001 duplicate definition · 1002 undefined variable · 1003 constant reassigned · 1004 unknown member · 1005 reserved word · 1006 misplaced return/break/continue · 1007 unknown parameter |
+| LIP2xxx | Type | 2001 operator type mismatch · 2002 declared type mismatch · 2003 argument count · 2004 argument type · 2005 condition not Boolean · 2006 unknown type · 2007 return type · 2008 not callable |
+| LIP3xxx | Module | 3001 module not found · 3002 circular use · 3003 not exported · 3004 ambiguous module · 3005 invalid export |
+| LIP4xxx | Async | 4001 await outside async context · 4002 timed out · 4003 cancelled · 4004 background task failed |
+| LIP5xxx | Runtime | 5000 general · 5001 index out of range · 5002 division by zero · 5003 null access · 5004 missing field · 5005 recursion limit · 5006 thrown by the program · 5007 file/IO · 5008 invalid argument · 5009 Integer overflow · 5010 assertion failed · 5011 database |
+| LIP6xxx | Security | reserved |
+| LIP7xxx | Package | reserved |
+
+## 17. CLI
+
+`lipi <file>`, `lipi run [file]`, `lipi check [file] [--json]`,
+`lipi test [path]`, `lipi new <name>` (creates `lipi.json`, `src/main.lipi`,
+`tests/`), `lipi repl` (or plain `lipi`), `lipi doctor`, `lipi --version`.
+`build dev format lint install remove update publish deploy setup` are
+reserved and report which release adds them.
+
+## 18. Grammar (EBNF, v0.1 core)
+
+```ebnf
+program     = { statement } ;
+statement   = show | binding | const | assignment | if | while | for | repeat
+            | function | return | break | continue | throw | try | match
+            | use | export | type | test | expression [ trailing_block ] ;
+binding     = IDENT [ ":" type ] "=" expression ;
+const       = "const" IDENT [ ":" type ] "=" expression ;
+assignment  = lvalue ( "=" | "+=" | "-=" | "*=" | "/=" ) expression ;
+if          = "if" expression block { "else" "if" expression block } [ "else" block ] ;
+function    = [ "async" ] [ "function" ] IDENT "(" [ params ] ")" [ "->" type ] block ;
+match       = "match" expression NEWLINE INDENT { patterns [ "if" expression ] block }
+              [ "else" block ] DEDENT ;
+use         = "use" module [ "as" IDENT ] | "from" module "use" IDENT { "," IDENT } ;
+export      = "export" ( IDENT { "," IDENT } | function | const | binding | type ) ;
+block       = NEWLINE INDENT { statement } DEDENT ;
+trailing_block = [ "with" IDENT { "," IDENT } ] block ;
+expression  = lambda | choice ;
+choice      = coalesce [ "if" coalesce "else" expression ] ;
+coalesce    = or { "??" or } ;
+or          = and { "or" and } ;
+and         = not { "and" not } ;
+not         = "not" not | comparison ;
+comparison  = range [ ( "==" | "!=" | "<" | "<=" | ">" | ">=" | "in" | "not" "in" ) range ] ;
+range       = term [ "to" term [ "step" term ] ] ;
+term        = factor { ( "+" | "-" ) factor } ;
+factor      = unary { ( "*" | "/" | "%" ) unary } ;
+unary       = ( "-" | "await" ) unary | power ;
+power       = postfix [ "**" unary ] ;
+postfix     = primary { "(" [ args ] ")" | "." IDENT | "?." IDENT | "[" expression "]" } ;
+primary     = INTEGER | DECIMAL | STRING | "true" | "false" | "null" | IDENT
+            | "[" [ expression { "," expression } ] "]"
+            | "{" [ key ":" expression { "," key ":" expression } ] "}"
+            | "(" expression ")" ;
+```
+
+## 19. Decisions taken where the plan left a choice
+
+| Topic | Decision |
+|---|---|
+| Function syntax | Compact `add(a, b)` plus the optional `function` keyword |
+| Range syntax | `1 to 10`, `10 to 0 step -2` (inclusive) |
+| Division | `/` always gives a Decimal; overflow is an error |
+| Truthiness | Strict Booleans everywhere (no compatibility mode) |
+| Interpolation | In v0.1 already: double quotes interpolate, single quotes are literal |
+| Constants | camelCase (`const appName`) |
+| Object vs map | One Object type with String keys; `obj.x` is strict, `obj["x"]` is lenient |
+| Module cycles | Error LIP3002 |
+| Match syntax | Patterns directly (no `when`), `else`, `_`, guards with `if` |
+| Extra keywords | `show`, `repeat`, `break`, `continue` (from the plan's examples and loop needs) |
+| `type` blocks | A simple object model (fields and methods, no inheritance) |
+
+## 20. Not yet implemented
+
+PostgreSQL driver (next in 0.3), formatter, linter, `lipi build` with the
+JavaScript target, LSP, debugger, package manager and lockfile, regex and
+encoding modules, UI components and `state`, client/server secret boundaries,
+permission-aware I/O, and generics/traits.

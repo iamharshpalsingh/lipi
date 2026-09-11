@@ -4,7 +4,10 @@
 //! one a future JavaScript / WASM / native backend will compile.
 
 pub mod builtins;
+mod crypto;
+mod db;
 mod http;
+mod server;
 pub mod interp;
 mod json;
 mod methods;

@@ -1,0 +1,7 @@
+ERROR LIP4001: await used outside async context
+
+tests/language/error_await.lipi:2:12
+        return await sleep(10)
+               ^^^^^^^^^^^^^^^
+
+Hint: Mark the function as async, for example: async loadUser(id)

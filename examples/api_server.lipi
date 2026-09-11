@@ -1,0 +1,53 @@
+# A small JSON API with sign-up, login and protected notes.
+#
+#   lipi examples/api_server.lipi
+#   curl -X POST localhost:3000/signup -d '{"email":"a@b.c","password":"secret123"}'
+#   curl -X POST localhost:3000/login  -d '{"email":"a@b.c","password":"secret123"}'
+#   curl localhost:3000/notes -H "Authorization: Bearer <token from login>"
+#
+# Data lives in memory here; see examples/notes_db.lipi for the database version.
+
+server.start 3000
+
+users = {}      # email -> {email, passwordHash}
+sessions = {}   # token -> email
+notes = []
+
+currentUser(request)
+    header = request.headers.get("authorization", "")
+    return sessions[header.replace("Bearer ", "")]
+
+get "/"
+    return {name: "notes api", routes: ["POST /signup", "POST /login", "GET /notes", "POST /notes"]}
+
+post "/signup" with request
+    data = request.json()
+    if data.get("email") == null or data.get("password", "").length < 8
+        return server.respond(422, {error: "email and a password of at least 8 characters are required"})
+    if users.has(data.email)
+        return server.respond(409, {error: "that email is already registered"})
+    users[data.email] = {email: data.email, passwordHash: crypto.hashPassword(data.password)}
+    return server.respond(201, {email: data.email})
+
+post "/login" with request
+    data = request.json()
+    user = users[data.get("email", "")]
+    if user == null or not crypto.verifyPassword(data.get("password", ""), user.passwordHash)
+        return server.respond(401, {error: "wrong email or password"})
+    token = crypto.randomToken()
+    sessions[token] = user.email
+    return {token: token}
+
+get "/notes" with request
+    email = currentUser(request)
+    if email == null
+        return server.respond(401, {error: "log in first"})
+    return notes.filter(n => n.owner == email)
+
+post "/notes" with request
+    email = currentUser(request)
+    if email == null
+        return server.respond(401, {error: "log in first"})
+    note = {id: crypto.uuid(), owner: email, text: request.json().get("text", "")}
+    notes.push(note)
+    return server.respond(201, note)

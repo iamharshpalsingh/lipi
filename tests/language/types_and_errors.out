@@ -1,13 +1,15 @@
 Point {x: 0, y: 0} Point {x: 3, y: 4}
-5
+5.0
 4
-Point number string list object nil function
-caught: `Point` has no field `z`
-caught: missing `x` when creating a Point
+Point Integer String Array Object Null Function
+caught: "Point" has no field "z"
+caught: missing "x" when creating a Point
 caught: something broke
+LIP5006 Runtime
 custom error code: 42
-caught: position 10 is outside the list (it has 3 items)
+caught: index 10 is outside array length 3
+LIP5001
 finally runs
 caught: can't divide 1 by zero
 json error caught
-caught: `x` should be a number, but this is a string
+caught: "x" should be an Integer, but this is a String

@@ -8,3 +8,11 @@ edition.workspace = true
 lipi_compiler = { path = "../compiler" }
 indexmap = "2"
 serde_json = { version = "1", features = ["preserve_order"] }
+sha1 = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
+pbkdf2 = "0.12"
+base64 = "0.22"
+getrandom = "0.2"
+# SQLite, compiled from source (needs a C compiler: MinGW GCC on Windows-GNU).
+rusqlite = { version = "0.32", features = ["bundled", "column_decltype"] }

@@ -1,0 +1,17 @@
+{id: 1, name: "Dezy", age: 25, active: true, tags: ["admin"]}
+3 2
+Asha 19 null
+["Dezy", "Ravi"]
+["Asha", "Dezy"]
+["admin"] Boolean
+true Pune
+true false 2
+[{name: "Dezy", age: 25}, {name: "Asha", age: 31}]
+1 26
+rolled back: something failed
+2
+true
+false
+[{id: 1, title: "Tea", price: 2.5}] ["products", "users"]
+[] 0 null
+LIP5011 Runtime

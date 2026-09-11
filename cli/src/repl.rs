@@ -13,7 +13,7 @@ fn is_name(s: &str) -> bool {
 fn opens_block(line: &str, is_function: impl Fn(&str) -> bool) -> bool {
     let t = line.trim_end();
     let first = t.split_whitespace().next().unwrap_or("");
-    if matches!(first, "if" | "else" | "for" | "while" | "repeat" | "try" | "catch" | "finally" | "match" | "when" | "async" | "type" | "test") {
+    if matches!(first, "if" | "else" | "for" | "while" | "repeat" | "try" | "catch" | "finally" | "match" | "async" | "function" | "type" | "test") {
         return true;
     }
     // `name(params)` or `name(params) -> type` on its own line defines a
@@ -32,7 +32,7 @@ fn opens_block(line: &str, is_function: impl Fn(&str) -> bool) -> bool {
 
 pub fn start() -> i32 {
     let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
-    println!("Lipi {} — type code and press Enter. Blocks end with an empty line. Type `exit` to leave.", env!("CARGO_PKG_VERSION"));
+    println!("LiPi {} — type code and press Enter. Blocks end with an empty line. Type `exit` to leave.", env!("CARGO_PKG_VERSION"));
     let mut it = Interpreter::new();
     let env = it.repl_env();
     let stdin = std::io::stdin();

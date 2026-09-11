@@ -33,30 +33,32 @@ for letter in "hi"
 
 grade(score)
     match score
-        when 90 to 100
+        90 to 100
             return "A"
-        when 75 to 89
+        75 to 89
             return "B"
-        when 0
+        0
             return "zero"
         else
             return "keep going"
 
 show grade(95), grade(80), grade(0), grade(40)
 
-day = "sun"
-match day
-    when "sat", "sun"
-        show "Weekend"
+status = "pending"
+match status
+    "paid"
+        show "Complete"
+    "pending", "new"
+        show "Waiting"
     else
-        show "Weekday"
+        show "Unknown"
 
 for n in [4, 17]
     size = "big" if n > 10 else "small"
     show n, size, ("even" if n % 2 == 0 else "odd")
 
 match 15
-    when 15 if false
+    15 if false
         show "never"
-    when _
+    _
         show "wildcard"

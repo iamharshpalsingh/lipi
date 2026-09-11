@@ -1,0 +1,4 @@
+load()
+    return await sleep(10)
+
+load()

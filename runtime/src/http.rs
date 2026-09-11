@@ -68,7 +68,7 @@ fn start(it: &mut Interpreter, a: &Args, method: String, mut url: String, body: 
                     headers.push((k.clone(), v.display()));
                 }
             }
-            if let Some(Value::Num(t)) = fields.get("timeout") {
+            if let Some(t) = fields.get("timeout").and_then(Value::as_f64) {
                 timeout_ms = t.max(1.0) as u64;
             }
             if let Some(Value::Object(q)) = fields.get("query") {
@@ -195,7 +195,7 @@ fn parse_response(raw: &[u8], url: &str) -> Result<SendValue, String> {
             .map(|(k, v)| (k.trim().to_lowercase(), SendValue::Str(v.trim().to_string())))
             .collect();
         return Ok(SendValue::Obj(vec![
-            ("status".into(), SendValue::Num(status)),
+            ("status".into(), SendValue::Int(status as i64)),
             ("ok".into(), SendValue::Bool((200.0..300.0).contains(&status))),
             ("url".into(), SendValue::Str(url.to_string())),
             ("headers".into(), SendValue::Obj(headers)),

@@ -1,0 +1,7 @@
+ERROR LIP2005: expected a Boolean (true or false), but this is an Array
+
+tests/language/error_condition.lipi:2:4
+    if items
+       ^^^^^
+
+Hint: Check for items explicitly, for example: if not items.isEmpty()

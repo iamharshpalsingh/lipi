@@ -1,0 +1,2 @@
+use "./_helpers.lipi" as helpers
+show helpers.secretHelper()

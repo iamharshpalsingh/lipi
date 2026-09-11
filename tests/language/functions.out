@@ -1,10 +1,11 @@
 5
+42
 81
 Hello, friend!
 Hello, Asha!
 Namaste, Ravi!
 counter: 3
-3628800
+2432902008176640000
 6765
 42
 [2, 1]
@@ -16,4 +17,4 @@ counter: 3
 10
 5!
 no return value
-nil
+null

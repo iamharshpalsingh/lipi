@@ -1,14 +1,14 @@
 # JSON, files, math, env, time, async tasks, modules
-from "./_helpers.lipi" import shout, VERSION
-import "./_helpers.lipi" as helpers
+from "./_helpers.lipi" use shout, version
+use "./_helpers.lipi" as helpers
 
-show shout("modules work"), VERSION, helpers.shout("again")
+show shout("modules work"), version, helpers.shout("again")
 
-data = {name: "Lipi", tags: ["simple", "powerful"], year: 2026, ok: true, none: nil}
+data = {name: "LiPi", tags: ["simple", "powerful"], year: 2026, ok: true, none: null, price: 19.5}
 text = json.stringify(data)
 show text
 back = json.parse(text)
-show back.tags[1], back == data
+show back.tags[1], back == data, typeOf(back.year), typeOf(back.price)
 show json.stringify({a: [1, 2]}, pretty: true)
 
 path = "_stdlib_tmp.txt"
@@ -18,8 +18,8 @@ show fs.read(path).lines(), fs.exists(path)
 fs.delete(path)
 show fs.exists(path)
 
-show math.sqrt(16), math.floor(3.7), math.round(3.14159, 2), math.max(3, 9, 2), math.min([5, 1, 7])
-r = math.random_int(1, 6)
+show math.sqrt(16), math.floor(3.7), math.round(3.14159, 2), math.max(3, 9, 2), math.min([5, 1, 7]), math.pow(2, 10)
+r = math.randomInt(1, 6)
 show r >= 1 and r <= 6
 show math.pi.round(4)
 
@@ -29,12 +29,12 @@ d = time.date(0)
 show d.year, d.month, d.day, d.weekday
 show time.iso(86400000)
 
-async slow_double(x)
+async slowDouble(x)
     await sleep(10)
     return x * 2
 
 start = time.now()
-results = await all([slow_double(1), slow_double(2), sleep(50)])
+results = await all([slowDouble(1), slowDouble(2), sleep(50)])
 show results
 show time.now() - start >= 50
 
@@ -50,4 +50,4 @@ catch err
 try
     await timeout(sleep(2000), 20)
 catch err
-    show err.message
+    show err.message, err.code

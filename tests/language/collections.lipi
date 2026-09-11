@@ -1,12 +1,12 @@
-# Lists, objects, strings and their methods
+# Arrays, Objects, Strings and their methods
 items = [1, 2, 3]
 items.push(4)
 show items, items.length, items.first, items.last, items[-1]
 items[0] = 100
 show items.pop(), items
-show items.contains(2), items.index_of(3), items.index_of(99)
+show items.contains(2), items.indexOf(3), items.indexOf(99)
 items.insert(0, "start")
-show items, items.remove_at(0), items.slice(1)
+show items, items.removeAt(0), items.slice(1)
 show items.reverse(), items.join("-"), [[1, 2], [3]].flat()
 
 user = {name: "Dezy", age: 25, "favorite color": "blue"}
@@ -21,18 +21,18 @@ nested = {team: {members: [{name: "A"}, {name: "B"}]}}
 show nested.team.members[1].name
 show nested.team.boss?.name
 
-word_counts = {}
+wordCounts = {}
 for word in "the cat and the hat".split()
-    word_counts[word] = (word_counts[word] ?? 0) + 1
-show word_counts
+    wordCounts[word] = (wordCounts[word] ?? 0) + 1
+show wordCounts
 
-text = "  Hello, Lipi!  "
+text = "  Hello, LiPi!  "
 show text.trim(), text.trim().lower(), text.length
 show "a,b,c".split(","), "lipi".chars(), "lipi".reverse()
-show "hello".replace("l", "L"), "hello".starts_with("he"), "hello".slice(1, 3)
-show "7".pad_start(3, "0"), "-".repeat(10), "abc".index_of("c")
-show "42".to_number() + 1, to_number("oops"), to_string(3.5) + "!"
+show "hello".replace("l", "L"), "hello".startsWith("he"), "hello".slice(1, 3)
+show "7".padStart(3, "0"), "-".repeat(10), "abc".indexOf("c")
+show "42".toNumber() + 1, toNumber("oops"), toString(3.5) + "!", toInteger("7.9"), toDecimal(2)
 
 people = [{name: "Zoya", age: 30}, {name: "Arjun", age: 22}]
-show people.sort_by(p => p.age).map(p => p.name)
+show people.sortBy(p => p.age).map(p => p.name)
 show (1 to 5), [1, 2] + [3]

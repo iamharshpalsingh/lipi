@@ -1,6 +1,7 @@
-ERROR: to compare two values, use ==
-  --> tests/language/error_syntax.lipi:2:10
-   |
- 2 | if score = 10
-   |          ^
+ERROR LIP0001: to compare two values, use ==
+
+tests/language/error_syntax.lipi:2:10
+    if score = 10
+             ^
+
 Hint: A single = stores a value. == checks whether two values are equal.

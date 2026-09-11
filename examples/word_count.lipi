@@ -3,7 +3,7 @@
 #   lipi examples/word_count.lipi README.md
 
 path = process.args.first
-if path == nil
+if path == null
     show "Usage: lipi examples/word_count.lipi <file>"
     process.exit(1)
 
@@ -16,8 +16,8 @@ for word in text.split()
         continue
     counts[word] = (counts[word] ?? 0) + 1
 
-top = counts.entries().sort_by(entry => -entry[1]).slice(0, 5)
+top = counts.entries().sortBy(entry => -entry[1]).slice(0, 5)
 
 show "Top words in {path}:"
 for entry in top
-    show "  {entry[0].pad_end(15)} {entry[1]}"
+    show "  {entry[0].padEnd(15)} {entry[1]}"

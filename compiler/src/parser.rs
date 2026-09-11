@@ -1,7 +1,7 @@
 //! Parser: turns tokens into an AST.
 //!
 //! A hand-written recursive-descent parser. Errors explain the problem in
-//! plain language and suggest the Lipi way of writing things.
+//! plain language and suggest the LiPi way of writing things.
 
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, Span};
@@ -11,12 +11,24 @@ use std::rc::Rc;
 
 type PResult<T> = Result<T, Diagnostic>;
 
+/// Words kept free for upcoming LiPi features (they can't be used as names).
+pub const RESERVED: &[&str] = &["state", "route", "component", "server"];
+
 pub struct Parser<'a> {
     src: &'a str,
     toks: Vec<Token>,
     pos: usize,
-    /// Set while parsing `when` patterns, where `if` starts a guard instead.
+    /// Set while parsing match patterns, where `if` starts a guard instead.
     no_inline_if: bool,
+}
+
+/// A name or dotted name, like `get` or `server.start`.
+fn is_path(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Ident(_) => true,
+        ExprKind::Field { object, optional: false, .. } => is_path(object),
+        _ => false,
+    }
 }
 
 const BLOCK_EXAMPLE: &str = "Indent the lines that belong to it by 4 spaces, for example:\n    if age >= 18\n        show \"Adult\"";
@@ -107,13 +119,18 @@ impl<'a> Parser<'a> {
                 let span = self.advance().span;
                 Ok(Name { text, span })
             }
-            Tok::Kw(k) => Err(Diagnostic::error(
-                format!("'{}' is a keyword, so it can't be used as {what}", k.as_str()),
-                self.span(),
-            )
-            .with_hint("Pick a different name.")),
+            Tok::Kw(k) => Err(Diagnostic::error(format!("\"{}\" is a keyword, so it can't be used as {what}", k.as_str()), self.span())
+                .with_code("LIP1005")
+                .with_hint("Pick a different name.")),
             _ => Err(self.unexpected(what)),
         }
+    }
+
+    /// A name that will be bound (variable, parameter, function...): reserved words aren't allowed.
+    fn binding(&mut self, what: &str) -> PResult<Name> {
+        let name = self.ident(what)?;
+        check_binding(&name)?;
+        Ok(name)
     }
 
     /// A field name after `.` or an object key: identifiers and keywords both work.
@@ -138,18 +155,14 @@ impl<'a> Parser<'a> {
                 Ok(())
             }
             Tok::Eof | Tok::Dedent => Ok(()),
-            Tok::Str(_) | Tok::Number(_) | Tok::Ident(_) => Err(Diagnostic::error(
-                format!("unexpected {} here", self.peek().describe()),
-                self.span(),
-            )
-            .with_hint("To show several values, separate them with commas: show \"Total:\", total")),
+            Tok::Str(_) | Tok::Int(_) | Tok::Decimal(_) | Tok::Ident(_) => {
+                Err(Diagnostic::error(format!("unexpected {} here", self.peek().describe()), self.span())
+                    .with_hint("To show several values, separate them with commas: show \"Total:\", total"))
+            }
             Tok::Colon => Err(Diagnostic::error("unexpected ':'", self.span())
-                .with_hint("Blocks in Lipi don't need ':'. Start the block on the next line, indented.")),
-            _ => Err(Diagnostic::error(
-                format!("unexpected {}: I expected the end of the line", self.peek().describe()),
-                self.span(),
-            )
-            .with_hint("Each statement goes on its own line.")),
+                .with_hint("Blocks in LiPi don't need ':'. Start the block on the next line, indented.")),
+            _ => Err(Diagnostic::error(format!("unexpected {}: I expected the end of the line", self.peek().describe()), self.span())
+                .with_hint("Each statement goes on its own line.")),
         }
     }
 
@@ -175,7 +188,7 @@ impl<'a> Parser<'a> {
         match self.peek() {
             Tok::Newline => {}
             Tok::Colon if matches!(self.peek_at(1), Tok::Newline) => {
-                return Err(Diagnostic::error("Lipi doesn't use ':' to start a block", self.span())
+                return Err(Diagnostic::error("LiPi doesn't use ':' to start a block", self.span())
                     .with_hint(format!("Remove the ':'. The indented lines below `{owner}` form its block.")));
             }
             Tok::Assign => {
@@ -183,11 +196,11 @@ impl<'a> Parser<'a> {
                     .with_hint("A single = stores a value. == checks whether two values are equal."));
             }
             Tok::LBrace => {
-                return Err(Diagnostic::error("Lipi uses indentation instead of { } for blocks", self.span())
-                    .with_hint(BLOCK_EXAMPLE));
+                return Err(Diagnostic::error("LiPi uses indentation instead of { } for blocks", self.span()).with_hint(BLOCK_EXAMPLE));
             }
             Tok::Eof => {
                 return Err(Diagnostic::error(format!("expected an indented block after `{owner}`"), owner_span)
+                    .with_code("LIP0005")
                     .with_hint(BLOCK_EXAMPLE));
             }
             _ => return Err(self.unexpected(&format!("the end of the line after `{owner}`"))),
@@ -195,6 +208,7 @@ impl<'a> Parser<'a> {
         self.advance();
         if !self.at(&Tok::Indent) {
             return Err(Diagnostic::error(format!("expected an indented block after `{owner}`"), owner_span)
+                .with_code("LIP0005")
                 .with_hint(BLOCK_EXAMPLE));
         }
         self.advance();
@@ -271,43 +285,47 @@ impl<'a> Parser<'a> {
             }
             Tok::Kw(Kw::Const) => {
                 self.advance();
-                let name = self.ident("a constant name")?;
+                let name = self.binding("a constant name")?;
                 let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
                 self.expect(&Tok::Assign, "'=' and a value for the constant")?;
                 let value = self.parse_expression()?;
-                let s = self.stmt(
-                    StmtKind::Assign { target: Target::Name(name), op: None, ty, value, constant: true },
-                    start,
-                );
+                let s = self.stmt(StmtKind::Assign { target: Target::Name(name), op: None, ty, value, constant: true }, start);
                 self.end_statement()?;
                 Ok(s)
             }
             Tok::Kw(Kw::Try) => self.parse_try(),
             Tok::Kw(Kw::Match) => self.parse_match(),
-            Tok::Kw(Kw::Import) => self.parse_import(),
+            Tok::Kw(Kw::Use) => self.parse_use(),
+            Tok::Kw(Kw::From) => self.parse_from_use(),
+            Tok::Kw(Kw::Export) => self.parse_export(),
+            Tok::Kw(Kw::Function) => {
+                self.advance();
+                match self.try_func_def(false, true)? {
+                    Some(f) => Ok(Stmt { kind: StmtKind::Func(f), span: start }),
+                    None => unreachable!("explicit definitions report their own errors"),
+                }
+            }
             Tok::Kw(Kw::Async) => {
                 self.advance();
-                match self.try_func_def(true)? {
+                self.eat_kw(Kw::Function);
+                match self.try_func_def(true, true)? {
                     Some(f) => Ok(Stmt { kind: StmtKind::Func(f), span: start }),
-                    None => unreachable!("async definitions report their own errors"),
+                    None => unreachable!("explicit definitions report their own errors"),
                 }
             }
             Tok::Kw(Kw::Else) => Err(Diagnostic::error("`else` must come right after an `if` block", start)
                 .with_hint("Make sure `else` lines up exactly with its `if`.")),
-            Tok::Kw(Kw::Catch) | Tok::Kw(Kw::Finally) => Err(Diagnostic::error(
-                format!("{} must come right after a `try` block", self.peek().describe()),
-                start,
-            )
-            .with_hint("Make sure it lines up exactly with its `try`.")),
+            Tok::Kw(Kw::Catch) | Tok::Kw(Kw::Finally) => {
+                Err(Diagnostic::error(format!("{} must come right after a `try` block", self.peek().describe()), start)
+                    .with_hint("Make sure it lines up exactly with its `try`."))
+            }
             Tok::Indent => {
                 let next = self.toks[(self.pos + 1).min(self.toks.len() - 1)].span;
                 Err(Diagnostic::error("this line is indented, but it isn't inside a block", next)
+                    .with_code("LIP0002")
                     .with_hint("Remove the extra spaces at the start of the line. Only lines after `if`, `for`, `while`, a function definition and similar can be indented."))
             }
             Tok::Ident(name) => {
-                if name == "from" && matches!(self.peek_at(1), Tok::Str(_)) {
-                    return self.parse_from_import();
-                }
                 if name == "type" && matches!(self.peek_at(1), Tok::Ident(_)) && matches!(self.peek_at(2), Tok::Newline) {
                     return self.parse_type_def();
                 }
@@ -315,7 +333,7 @@ impl<'a> Parser<'a> {
                     return self.parse_test();
                 }
                 if matches!(self.peek_at(1), Tok::LParen) {
-                    if let Some(f) = self.try_func_def(false)? {
+                    if let Some(f) = self.try_func_def(false, false)? {
                         return Ok(Stmt { kind: StmtKind::Func(f), span: start });
                     }
                 }
@@ -331,26 +349,43 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Catch habits from other languages (`let x = 1`, `function f()`, `elif`) with a friendly hint.
+    /// Catch habits from other languages (`let x = 1`, `def f()`, `elif`, `import x`) with a friendly hint.
     fn foreign_statement(&self, name: &str) -> Option<Diagnostic> {
         let next = self.peek_at(1);
         let next2 = self.peek_at(2);
         let msg = match name {
-            "let" | "var" if matches!(next, Tok::Ident(_)) && matches!(next2, Tok::Assign) => {
-                format!("Lipi doesn't need `{name}`")
-            }
-            "function" | "def" | "fn" | "func" if matches!(next, Tok::Ident(_)) => {
-                format!("Lipi doesn't use `{name}` to define functions")
-            }
-            "elif" | "elsif" | "elseif" => format!("Lipi writes `{name}` as `else if`"),
+            "let" | "var" if matches!(next, Tok::Ident(_)) && matches!(next2, Tok::Assign) => format!("LiPi doesn't need `{name}`"),
+            "def" | "fn" | "func" if matches!(next, Tok::Ident(_)) => format!("LiPi doesn't use `{name}` to define functions"),
+            "elif" | "elsif" | "elseif" => format!("LiPi writes `{name}` as `else if`"),
+            "import" | "require" if matches!(next, Tok::Ident(_) | Tok::Str(_)) => format!("LiPi uses `use` instead of `{name}`"),
             _ => return None,
         };
-        Some(Diagnostic::error(msg, self.span()).maybe_hint(suggest::foreign_name_hint(name).map(String::from)))
+        Some(Diagnostic::error(msg, self.span()).with_code("LIP0008").maybe_hint(suggest::foreign_name_hint(name).map(String::from)))
     }
 
     fn parse_simple_statement(&mut self) -> PResult<Stmt> {
         let start = self.span();
-        let expr = self.parse_expression()?;
+        let mut expr = self.parse_expression()?;
+        // A call without parentheses: `server.start 3000`, `get "/users"`
+        if is_path(&expr) && self.command_arg_ahead() {
+            let args = self.parse_command_args()?;
+            let span = expr.span.to(self.prev_span());
+            expr = Expr { kind: ExprKind::Call { callee: Box::new(expr), args }, span };
+        }
+        // A trailing block becomes a function passed as the last argument.
+        let block_ahead = self.at_ident("with") || (self.at(&Tok::Newline) && matches!(self.peek_at(1), Tok::Indent));
+        if block_ahead && is_path(&expr) {
+            // `server.before with request` + block: a call whose only argument is the block
+            let span = expr.span;
+            expr = Expr { kind: ExprKind::Call { callee: Box::new(expr), args: Vec::new() }, span };
+        }
+        if matches!(expr.kind, ExprKind::Call { .. }) && block_ahead {
+            let block = self.parse_trailing_block()?;
+            if let ExprKind::Call { args, .. } = &mut expr.kind {
+                args.push(Arg { name: None, value: block });
+            }
+            return Ok(Stmt { kind: StmtKind::Expr(expr), span: start });
+        }
         let op = match self.peek() {
             Tok::Assign => None,
             Tok::PlusAssign => Some(BinOp::Add),
@@ -365,10 +400,63 @@ impl<'a> Parser<'a> {
         };
         self.advance();
         let target = self.to_target(expr)?;
+        if let Target::Name(n) = &target {
+            check_binding(n)?;
+        }
         let value = self.parse_expression()?;
         let s = self.stmt(StmtKind::Assign { target, op, ty: None, value, constant: false }, start);
         self.end_statement()?;
         Ok(s)
+    }
+
+    fn command_arg_ahead(&self) -> bool {
+        match self.peek() {
+            Tok::Str(_) | Tok::Int(_) | Tok::Decimal(_) | Tok::LBrace | Tok::Kw(Kw::True | Kw::False | Kw::Null) => true,
+            Tok::Ident(name) => name != "with",
+            _ => false,
+        }
+    }
+
+    /// Arguments of a call without parentheses, up to the end of the line (or `with`).
+    fn parse_command_args(&mut self) -> PResult<Vec<Arg>> {
+        let mut args: Vec<Arg> = Vec::new();
+        loop {
+            if matches!(self.peek(), Tok::Ident(_)) && matches!(self.peek_at(1), Tok::Colon) {
+                let name = self.ident("an argument name")?;
+                self.advance();
+                args.push(Arg { name: Some(name), value: self.parse_expression()? });
+            } else {
+                let value = self.parse_expression()?;
+                if args.iter().any(|a| a.name.is_some()) {
+                    return Err(Diagnostic::error("positional arguments must come before named ones", value.span));
+                }
+                args.push(Arg { name: None, value });
+            }
+            if !self.eat(&Tok::Comma) {
+                break;
+            }
+        }
+        Ok(args)
+    }
+
+    /// `[with a, b]` followed by an indented block, as a function value.
+    fn parse_trailing_block(&mut self) -> PResult<Expr> {
+        let start = self.span();
+        let mut params = Vec::new();
+        if self.at_ident("with") {
+            self.advance();
+            loop {
+                let name = self.binding("a name for the block's input, like: with request")?;
+                let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
+                params.push(Param { name, ty, default: None });
+                if !self.eat(&Tok::Comma) {
+                    break;
+                }
+            }
+        }
+        let body = self.parse_block("this line", start)?;
+        let decl = FuncDecl { name: Name { text: "<block>".into(), span: start }, params, ret: None, body, is_async: false, is_lambda: true, span: start };
+        Ok(Expr { kind: ExprKind::Lambda(Rc::new(decl)), span: start })
     }
 
     fn to_target(&self, expr: Expr) -> PResult<Target> {
@@ -376,7 +464,7 @@ impl<'a> Parser<'a> {
             ExprKind::Ident(text) => Ok(Target::Name(Name { text, span: expr.span })),
             ExprKind::Field { object, name, optional: false } => Ok(Target::Field(*object, name)),
             ExprKind::Index { object, index } => Ok(Target::Index(*object, *index)),
-            _ => Err(Diagnostic::error("can't assign to this", expr.span).with_hint(
+            _ => Err(Diagnostic::error("can't assign to this", expr.span).with_code("LIP0006").with_hint(
                 "Only a name (x), a field (user.name) or an item (items[0]) can be on the left of =. To compare values, use ==.",
             )),
         }
@@ -384,19 +472,16 @@ impl<'a> Parser<'a> {
 
     fn parse_typed_assign(&mut self) -> PResult<Stmt> {
         let start = self.span();
-        let name = self.ident("a variable name")?;
+        let name = self.binding("a variable name")?;
         self.advance(); // :
         let ty = self.parse_type()?;
         if !self.at(&Tok::Assign) {
-            return Err(Diagnostic::error(format!("give `{}` a starting value", name.text), self.span())
+            return Err(Diagnostic::error(format!("give \"{}\" a starting value", name.text), self.span())
                 .with_hint(format!("For example: {}: {} = ...", name.text, ty)));
         }
         self.advance();
         let value = self.parse_expression()?;
-        let s = self.stmt(
-            StmtKind::Assign { target: Target::Name(name), op: None, ty: Some(ty), value, constant: false },
-            start,
-        );
+        let s = self.stmt(StmtKind::Assign { target: Target::Name(name), op: None, ty: Some(ty), value, constant: false }, start);
         self.end_statement()?;
         Ok(s)
     }
@@ -423,8 +508,8 @@ impl<'a> Parser<'a> {
 
     fn parse_for(&mut self) -> PResult<Stmt> {
         let start = self.advance().span;
-        let first = self.ident("a loop variable name, like: for item in items")?;
-        let second = if self.eat(&Tok::Comma) { Some(self.ident("a second loop variable name")?) } else { None };
+        let first = self.binding("a loop variable name, like: for item in items")?;
+        let second = if self.eat(&Tok::Comma) { Some(self.binding("a second loop variable name")?) } else { None };
         if !self.eat_kw(Kw::In) {
             return Err(self.unexpected("`in`").with_hint("Write loops like: for item in items   or   for i in 1 to 10"));
         }
@@ -440,7 +525,7 @@ impl<'a> Parser<'a> {
         let mut finally = None;
         if self.at_kw(Kw::Catch) {
             let span = self.advance().span;
-            let name = if matches!(self.peek(), Tok::Ident(_)) { Some(self.ident("an error name")?) } else { None };
+            let name = if matches!(self.peek(), Tok::Ident(_)) { Some(self.binding("an error name")?) } else { None };
             catch = Some((name, self.parse_block("catch", span)?));
         }
         if self.at_kw(Kw::Finally) {
@@ -448,9 +533,8 @@ impl<'a> Parser<'a> {
             finally = Some(self.parse_block("finally", span)?);
         }
         if catch.is_none() && finally.is_none() {
-            return Err(Diagnostic::error("`try` needs a `catch` block", start).with_hint(
-                "For example:\n    try\n        risky()\n    catch error\n        show error.message",
-            ));
+            return Err(Diagnostic::error("`try` needs a `catch` block", start)
+                .with_hint("For example:\n    try\n        risky()\n    catch error\n        show error.message"));
         }
         Ok(Stmt { kind: StmtKind::Try { body, catch, finally }, span: start })
     }
@@ -459,10 +543,9 @@ impl<'a> Parser<'a> {
         let start = self.advance().span;
         let subject = self.parse_expression()?;
         self.expect(&Tok::Newline, "the end of the line after `match`")?;
+        const EXAMPLE: &str = "For example:\n    match status\n        \"paid\"\n            show \"Complete\"\n        \"pending\", \"new\"\n            show \"Waiting\"\n        else\n            show \"Unknown\"";
         if !self.eat(&Tok::Indent) {
-            return Err(Diagnostic::error("expected indented `when` cases after `match`", start).with_hint(
-                "For example:\n    match day\n        when \"sat\", \"sun\"\n            show \"Weekend\"\n        else\n            show \"Weekday\"",
-            ));
+            return Err(Diagnostic::error("expected indented cases after `match`", start).with_code("LIP0005").with_hint(EXAMPLE));
         }
         let mut arms = Vec::new();
         let mut otherwise = None;
@@ -471,25 +554,25 @@ impl<'a> Parser<'a> {
             if self.at(&Tok::Dedent) || self.at(&Tok::Eof) {
                 break;
             }
-            if self.at_ident("when") {
-                let when_span = self.advance().span;
-                self.no_inline_if = true;
-                let mut patterns = vec![self.parse_expression()];
-                while patterns.last().is_some_and(|p| p.is_ok()) && self.eat(&Tok::Comma) {
-                    patterns.push(self.parse_expression());
-                }
-                self.no_inline_if = false;
-                let patterns = patterns.into_iter().collect::<PResult<Vec<Expr>>>()?;
-                let guard = if self.eat_kw(Kw::If) { Some(self.parse_expression()?) } else { None };
-                let body = self.parse_block("when", when_span)?;
-                arms.push(MatchArm { patterns, guard, body });
-            } else if self.at_kw(Kw::Else) {
+            if self.at_kw(Kw::Else) {
                 let span = self.advance().span;
                 otherwise = Some(self.parse_block("else", span)?);
-            } else {
-                return Err(Diagnostic::error("inside `match`, each case starts with `when`", self.span())
-                    .with_hint("Write: when \"value\"   or   else"));
+                continue;
             }
+            if self.at_ident("when") && !matches!(self.peek_at(1), Tok::Newline) {
+                return Err(Diagnostic::error("match cases don't need `when`", self.span()).with_code("LIP0008").with_hint(EXAMPLE));
+            }
+            let case_span = self.span();
+            self.no_inline_if = true;
+            let mut patterns = vec![self.parse_expression()];
+            while patterns.last().is_some_and(|p| p.is_ok()) && self.eat(&Tok::Comma) {
+                patterns.push(self.parse_expression());
+            }
+            self.no_inline_if = false;
+            let patterns = patterns.into_iter().collect::<PResult<Vec<Expr>>>()?;
+            let guard = if self.eat_kw(Kw::If) { Some(self.parse_expression()?) } else { None };
+            let body = self.parse_block("this case", case_span)?;
+            arms.push(MatchArm { patterns, guard, body });
         }
         self.eat(&Tok::Dedent);
         Ok(Stmt { kind: StmtKind::Match { subject, arms, otherwise }, span: start })
@@ -508,42 +591,67 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_import(&mut self) -> PResult<Stmt> {
+    /// A module name (`math`, `payments.razorpay`) or a path in quotes.
+    fn module_source(&mut self) -> PResult<String> {
+        if matches!(self.peek(), Tok::Str(_)) {
+            return self.plain_string("a module path");
+        }
+        let mut name = self.ident("a module name or a path in quotes")?.text;
+        while self.eat(&Tok::Dot) {
+            name.push('.');
+            name.push_str(&self.field_name()?.text);
+        }
+        Ok(name)
+    }
+
+    fn parse_use(&mut self) -> PResult<Stmt> {
         let start = self.advance().span;
-        let source = if matches!(self.peek(), Tok::Str(_)) {
-            self.plain_string("an import path")?
-        } else {
-            let mut name = self.ident("a module name or a path in quotes")?.text;
-            while self.eat(&Tok::Dot) {
-                name.push('.');
-                name.push_str(&self.field_name()?.text);
-            }
-            name
-        };
-        let alias = if self.at_ident("as") {
-            self.advance();
-            Some(self.ident("a name after `as`")?)
-        } else {
-            None
-        };
-        let s = self.stmt(StmtKind::Import { source, alias, names: None }, start);
+        let source = self.module_source()?;
+        let alias = if self.eat_kw(Kw::As) { Some(self.binding("a name after `as`")?) } else { None };
+        let s = self.stmt(StmtKind::Use { source, alias, names: None }, start);
         self.end_statement()?;
         Ok(s)
     }
 
-    fn parse_from_import(&mut self) -> PResult<Stmt> {
+    fn parse_from_use(&mut self) -> PResult<Stmt> {
         let start = self.advance().span;
-        let source = self.plain_string("an import path")?;
-        if !self.eat_kw(Kw::Import) {
-            return Err(self.unexpected("`import`").with_hint("Write: from \"./math.lipi\" import add, subtract"));
+        let source = self.module_source()?;
+        if !self.eat_kw(Kw::Use) {
+            return Err(self.unexpected("`use`").with_hint("Write: from math use add, subtract"));
         }
-        let mut names = vec![self.ident("a name to import")?];
+        let mut names = vec![self.binding("a name to use")?];
         while self.eat(&Tok::Comma) {
-            names.push(self.ident("a name to import")?);
+            names.push(self.binding("a name to use")?);
         }
-        let s = self.stmt(StmtKind::Import { source, alias: None, names: Some(names) }, start);
+        let s = self.stmt(StmtKind::Use { source, alias: None, names: Some(names) }, start);
         self.end_statement()?;
         Ok(s)
+    }
+
+    fn parse_export(&mut self) -> PResult<Stmt> {
+        let start = self.advance().span;
+        let names_only = matches!(self.peek(), Tok::Ident(_)) && matches!(self.peek_at(1), Tok::Comma | Tok::Newline | Tok::Eof | Tok::Dedent);
+        if names_only {
+            let mut names = vec![self.ident("a name to export")?];
+            while self.eat(&Tok::Comma) {
+                names.push(self.ident("a name to export")?);
+            }
+            let s = self.stmt(StmtKind::Export { names, inner: None }, start);
+            self.end_statement()?;
+            return Ok(s);
+        }
+        let inner = self.parse_statement()?;
+        let name = match &inner.kind {
+            StmtKind::Func(f) => f.name.clone(),
+            StmtKind::TypeDef(t) => t.name.clone(),
+            StmtKind::Assign { target: Target::Name(n), op: None, .. } => n.clone(),
+            _ => {
+                return Err(Diagnostic::error("`export` needs a name or a definition", start)
+                    .with_code("LIP3005")
+                    .with_hint("For example: export add   or   export const limit = 10"))
+            }
+        };
+        Ok(Stmt { kind: StmtKind::Export { names: vec![name], inner: Some(Box::new(inner)) }, span: start })
     }
 
     fn parse_test(&mut self) -> PResult<Stmt> {
@@ -555,11 +663,12 @@ impl<'a> Parser<'a> {
 
     fn parse_type_def(&mut self) -> PResult<Stmt> {
         let start = self.advance().span;
-        let name = self.ident("a type name")?;
+        let name = self.binding("a type name")?;
         self.advance(); // newline
         if !self.eat(&Tok::Indent) {
-            return Err(Diagnostic::error(format!("expected the fields of `{}` on indented lines", name.text), start)
-                .with_hint("For example:\n    type User\n        name: string\n        age = 0"));
+            return Err(Diagnostic::error(format!("expected the fields of \"{}\" on indented lines", name.text), start)
+                .with_code("LIP0005")
+                .with_hint("For example:\n    type User\n        name: String\n        age = 0"));
         }
         let mut fields = Vec::new();
         let mut methods = Vec::new();
@@ -569,16 +678,17 @@ impl<'a> Parser<'a> {
                 break;
             }
             let is_async = self.eat_kw(Kw::Async);
+            let explicit = self.eat_kw(Kw::Function) || is_async;
             match (self.peek().clone(), self.peek_at(1).clone()) {
-                (Tok::Ident(_), Tok::LParen) => match self.try_func_def(is_async)? {
+                (Tok::Ident(_), Tok::LParen) => match self.try_func_def(is_async, explicit)? {
                     Some(f) => methods.push(f),
                     None => {
                         return Err(Diagnostic::error("expected a method definition with an indented body", self.span())
-                            .with_hint("For example:\n    greet()\n        return \"Hi, {self.name}\""))
+                            .with_hint("For example:\n    greet()\n        return \"Hi, \" + self.name"))
                     }
                 },
-                (Tok::Ident(_), Tok::Colon) | (Tok::Ident(_), Tok::Assign) if !is_async => {
-                    let fname = self.ident("a field name")?;
+                (Tok::Ident(_), Tok::Colon) | (Tok::Ident(_), Tok::Assign) if !explicit => {
+                    let fname = self.binding("a field name")?;
                     let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
                     let default = if self.eat(&Tok::Assign) { Some(self.parse_expression()?) } else { None };
                     self.end_statement()?;
@@ -586,7 +696,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     return Err(Diagnostic::error("inside a type, write fields and methods", self.span()).with_hint(
-                        "Fields look like `name: string` or `age = 0`. Methods look like `greet()` followed by an indented body.",
+                        "Fields look like `name: String` or `age = 0`. Methods look like `greet()` followed by an indented body.",
                     ))
                 }
             }
@@ -595,9 +705,10 @@ impl<'a> Parser<'a> {
         Ok(Stmt { kind: StmtKind::TypeDef(Rc::new(TypeDecl { name, fields, methods })), span: start })
     }
 
-    /// Try to parse `name(params) [-> type]` followed by an indented body.
-    /// Returns `None` (and rewinds) when this is really a call statement.
-    fn try_func_def(&mut self, is_async: bool) -> PResult<Option<Rc<FuncDecl>>> {
+    /// Try to parse `name(params) [-> Type]` followed by an indented body.
+    /// Returns `None` (and rewinds) when this is really a call statement,
+    /// unless `explicit` (after `function`/`async`), where problems are errors.
+    fn try_func_def(&mut self, is_async: bool, explicit: bool) -> PResult<Option<Rc<FuncDecl>>> {
         let save = self.pos;
         let header = self.func_header();
         let has_body = matches!(self.peek(), Tok::Newline) && matches!(self.peek_at(1), Tok::Indent);
@@ -608,12 +719,10 @@ impl<'a> Parser<'a> {
                 let span = name.span;
                 Ok(Some(Rc::new(FuncDecl { name, params, ret, body, is_async, is_lambda: false, span })))
             }
-            Err(e) if is_async => Err(e),
-            Ok((name, _, _)) if is_async => Err(Diagnostic::error(
-                format!("expected an indented body for `async {}`", name.text),
-                name.span,
-            )
-            .with_hint("For example:\n    async load(id)\n        return await http.get(url)")),
+            Err(e) if explicit => Err(e),
+            Ok((name, _, _)) if explicit => Err(Diagnostic::error(format!("expected an indented body for \"{}\"", name.text), name.span)
+                .with_code("LIP0005")
+                .with_hint("For example:\n    function add(a, b)\n        return a + b")),
             _ => {
                 self.pos = save;
                 Ok(None)
@@ -622,8 +731,8 @@ impl<'a> Parser<'a> {
     }
 
     fn func_header(&mut self) -> PResult<(Name, Vec<Param>, Option<TypeExpr>)> {
-        let name = self.ident("a function name")?;
-        self.expect(&Tok::LParen, "'('")?;
+        let name = self.binding("a function name")?;
+        self.expect(&Tok::LParen, "'('").map_err(|e| e.with_hint("Function definitions look like: function add(a, b)"))?;
         let params = self.parse_params(&Tok::RParen)?;
         let ret = if self.eat(&Tok::Arrow) { Some(self.parse_type()?) } else { None };
         Ok((name, params, ret))
@@ -635,15 +744,15 @@ impl<'a> Parser<'a> {
             if self.eat(close) {
                 break;
             }
-            let name = self.ident("a parameter name")?;
+            let name = self.binding("a parameter name")?;
             if params.iter().any(|p| p.name.text == name.text) {
-                return Err(Diagnostic::error(format!("the parameter `{}` appears twice", name.text), name.span));
+                return Err(Diagnostic::error(format!("the parameter \"{}\" appears twice", name.text), name.span).with_code("LIP1001"));
             }
             let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
             let default = if self.eat(&Tok::Assign) { Some(self.parse_expression()?) } else { None };
             params.push(Param { name, ty, default });
             if !self.eat(&Tok::Comma) {
-                self.expect(close, "',' or ')'")?;
+                self.expect(close, "',' or ')' after function parameters")?;
                 break;
             }
         }
@@ -656,11 +765,11 @@ impl<'a> Parser<'a> {
             let inner = self.parse_type()?;
             self.expect(&Tok::RBracket, "']'")?;
             TypeExpr { kind: TypeKind::List(Box::new(inner)), span: start.to(self.prev_span()) }
-        } else if self.eat_kw(Kw::Nil) {
-            TypeExpr { kind: TypeKind::Named("nil".into()), span: start }
+        } else if self.eat_kw(Kw::Null) {
+            TypeExpr { kind: TypeKind::Named("Null".into()), span: start }
         } else {
-            let name = self.ident("a type name like number, string, bool, list or object")?;
-            if name.text == "list" && self.eat(&Tok::LBracket) {
+            let name = self.ident("a type name like Integer, String, Boolean, Array or Object")?;
+            if (name.text == "Array" || name.text == "List") && self.eat(&Tok::LBracket) {
                 let inner = self.parse_type()?;
                 self.expect(&Tok::RBracket, "']'")?;
                 TypeExpr { kind: TypeKind::List(Box::new(inner)), span: start.to(self.prev_span()) }
@@ -724,7 +833,7 @@ impl<'a> Parser<'a> {
     fn parse_lambda(&mut self) -> PResult<Expr> {
         let start = self.span();
         let params = if matches!(self.peek(), Tok::Ident(_)) {
-            let name = self.ident("a parameter name")?;
+            let name = self.binding("a parameter name")?;
             vec![Param { name, ty: None, default: None }]
         } else {
             self.advance();
@@ -734,15 +843,7 @@ impl<'a> Parser<'a> {
         let body = self.parse_expression()?;
         let span = start.to(body.span);
         let ret = Stmt { span: body.span, kind: StmtKind::Return(Some(body)) };
-        let decl = FuncDecl {
-            name: Name { text: "<lambda>".into(), span: start },
-            params,
-            ret: None,
-            body: vec![ret],
-            is_async: false,
-            is_lambda: true,
-            span,
-        };
+        let decl = FuncDecl { name: Name { text: "<lambda>".into(), span: start }, params, ret: None, body: vec![ret], is_async: false, is_lambda: true, span };
         Ok(Expr { kind: ExprKind::Lambda(Rc::new(decl)), span })
     }
 
@@ -808,8 +909,7 @@ impl<'a> Parser<'a> {
         }
         let right = self.parse_range()?;
         if self.comparison_op().is_some() {
-            return Err(Diagnostic::error("to combine two comparisons, use `and`", self.span())
-                .with_hint("For example: 0 < x and x < 10"));
+            return Err(Diagnostic::error("to combine two comparisons, use `and`", self.span()).with_hint("For example: 0 < x and x < 10"));
         }
         let span = left.span.to(right.span);
         Ok(Expr { kind: ExprKind::Binary(op, Box::new(left), Box::new(right)), span })
@@ -949,9 +1049,13 @@ impl<'a> Parser<'a> {
     fn parse_primary(&mut self) -> PResult<Expr> {
         let span = self.span();
         let kind = match self.peek().clone() {
-            Tok::Number(n) => {
+            Tok::Int(n) => {
                 self.advance();
-                ExprKind::Number(n)
+                ExprKind::Int(n)
+            }
+            Tok::Decimal(n) => {
+                self.advance();
+                ExprKind::Decimal(n)
             }
             Tok::Str(parts) => {
                 self.advance();
@@ -965,9 +1069,9 @@ impl<'a> Parser<'a> {
                 self.advance();
                 ExprKind::Bool(false)
             }
-            Tok::Kw(Kw::Nil) => {
+            Tok::Kw(Kw::Null) => {
                 self.advance();
-                ExprKind::Nil
+                ExprKind::Null
             }
             Tok::Ident(name) => {
                 self.advance();
@@ -998,10 +1102,9 @@ impl<'a> Parser<'a> {
                     let kspan = self.span();
                     let (key, ident_key) = match self.peek().clone() {
                         Tok::Str(_) => (Name { text: self.plain_string("a key")?, span: kspan }, false),
-                        Tok::Number(n) => {
+                        Tok::Int(n) => {
                             self.advance();
-                            let text = if n.fract() == 0.0 && n.abs() < 1e15 { format!("{}", n as i64) } else { n.to_string() };
-                            (Name { text, span: kspan }, false)
+                            (Name { text: n.to_string(), span: kspan }, false)
                         }
                         _ => (self.field_name()?, true),
                     };
@@ -1014,7 +1117,7 @@ impl<'a> Parser<'a> {
                         return Err(self.unexpected("':' after the key").with_hint("Objects look like: { name: \"Dezy\", age: 25 }"));
                     };
                     if fields.iter().any(|(k, _)| k.text == key.text) {
-                        return Err(Diagnostic::error(format!("the key `{}` appears twice", key.text), key.span));
+                        return Err(Diagnostic::error(format!("the key \"{}\" appears twice", key.text), key.span).with_code("LIP1001"));
                     }
                     fields.push((key, value));
                     if !self.eat(&Tok::Comma) {
@@ -1025,12 +1128,11 @@ impl<'a> Parser<'a> {
                 ExprKind::Object(fields)
             }
             Tok::Kw(k) => {
-                return Err(Diagnostic::error(format!("`{}` can't be used as a value here", k.as_str()), span)
-                    .maybe_hint(match k {
-                        Kw::If => Some("To pick between two values, use an if/else block and assign in each branch.".to_string()),
-                        Kw::Show => Some("`show` is a statement: put it at the start of its own line.".to_string()),
-                        _ => None,
-                    }))
+                return Err(Diagnostic::error(format!("`{}` can't be used as a value here", k.as_str()), span).maybe_hint(match k {
+                    Kw::If => Some("To pick between two values, write: value if condition else other".to_string()),
+                    Kw::Show => Some("`show` is a statement: put it at the start of its own line.".to_string()),
+                    _ => None,
+                }))
             }
             _ => return Err(self.unexpected("a value")),
         };
@@ -1063,6 +1165,18 @@ impl<'a> Parser<'a> {
     }
 }
 
+fn check_binding(name: &Name) -> PResult<()> {
+    if !RESERVED.contains(&name.text.as_str()) {
+        return Ok(());
+    }
+    let hint = if name.text == "server" {
+        "`server` is the built-in web server module. Pick another name, like app or api."
+    } else {
+        "It is reserved for upcoming LiPi features. Pick another name."
+    };
+    Err(Diagnostic::error(format!("\"{}\" is a reserved word", name.text), name.span).with_code("LIP1005").with_hint(hint))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ast::*;
@@ -1073,10 +1187,11 @@ mod tests {
     }
 
     #[test]
-    fn function_definition_without_keyword() {
-        let p = parse("add(a, b)\n    return a + b\nshow add(1, 2)\n");
+    fn function_definitions() {
+        let p = parse("add(a, b)\n    return a + b\nfunction sub(a, b)\n    return a - b\nshow add(1, 2)\n");
         assert!(matches!(p.body[0].kind, StmtKind::Func(_)));
-        assert!(matches!(p.body[1].kind, StmtKind::Show(_)));
+        assert!(matches!(p.body[1].kind, StmtKind::Func(_)));
+        assert!(matches!(p.body[2].kind, StmtKind::Show(_)));
     }
 
     #[test]
@@ -1103,11 +1218,35 @@ mod tests {
 
     #[test]
     fn typed_declaration_and_lambda() {
-        let p = parse("name: string = \"Dezy\"\ndouble = x => x * 2\n");
+        let p = parse("name: String = \"Dezy\"\ndouble = x => x * 2\n");
         let StmtKind::Assign { ty, .. } = &p.body[0].kind else { panic!() };
-        assert_eq!(ty.as_ref().unwrap().to_string(), "string");
+        assert_eq!(ty.as_ref().unwrap().to_string(), "String");
         let StmtKind::Assign { value, .. } = &p.body[1].kind else { panic!() };
         assert!(matches!(value.kind, ExprKind::Lambda(_)));
+    }
+
+    #[test]
+    fn modules_and_match() {
+        let p = parse("use math\nfrom \"./x.lipi\" use a, b\nexport add\nexport const limit = 3\nmatch s\n    \"paid\"\n        show 1\n    else\n        show 2\n");
+        assert!(matches!(p.body[0].kind, StmtKind::Use { .. }));
+        assert!(matches!(&p.body[1].kind, StmtKind::Use { names: Some(n), .. } if n.len() == 2));
+        assert!(matches!(&p.body[2].kind, StmtKind::Export { inner: None, .. }));
+        assert!(matches!(&p.body[3].kind, StmtKind::Export { inner: Some(_), .. }));
+        let StmtKind::Match { arms, otherwise, .. } = &p.body[4].kind else { panic!() };
+        assert_eq!(arms.len(), 1);
+        assert!(otherwise.is_some());
+    }
+
+    #[test]
+    fn command_calls_and_trailing_blocks() {
+        let p = parse("server.start 3000\nget \"/users/:id\" with request\n    return request.params.id\nretry(3)\n    show 1\n");
+        let StmtKind::Expr(Expr { kind: ExprKind::Call { args, .. }, .. }) = &p.body[0].kind else { panic!() };
+        assert_eq!(args.len(), 1);
+        let StmtKind::Expr(Expr { kind: ExprKind::Call { args, .. }, .. }) = &p.body[1].kind else { panic!() };
+        let ExprKind::Lambda(block) = &args[1].value.kind else { panic!() };
+        assert_eq!(block.params[0].name.text, "request");
+        let StmtKind::Expr(Expr { kind: ExprKind::Call { args, .. }, .. }) = &p.body[2].kind else { panic!() };
+        assert_eq!(args.len(), 2);
     }
 
     #[test]
@@ -1115,8 +1254,10 @@ mod tests {
         let e = parse_source("if x = 5\n    show x\n").unwrap_err();
         assert!(e.message.contains("=="));
         let e = parse_source("if x > 1\nshow x\n").unwrap_err();
-        assert!(e.message.contains("indented block"));
+        assert_eq!(e.code, Some("LIP0005"));
         let e = parse_source("let x = 5\n").unwrap_err();
-        assert!(e.message.contains("let"));
+        assert_eq!(e.code, Some("LIP0008"));
+        let e = parse_source("state = 1\n").unwrap_err();
+        assert_eq!(e.code, Some("LIP1005"));
     }
 }
