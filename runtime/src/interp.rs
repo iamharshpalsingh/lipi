@@ -2,6 +2,7 @@
 
 use crate::builtins;
 use crate::methods;
+use crate::resolver::Resolver;
 use crate::task;
 use crate::value::*;
 use lipi_compiler::ast::*;
@@ -57,6 +58,7 @@ struct TestCase {
     body: Block,
     env: Rc<Env>,
     file: Rc<str>,
+    layout: Names,
 }
 
 pub struct TestResult {
@@ -82,6 +84,8 @@ pub struct Interpreter {
     pub(crate) rng: u64,
     pub project_root: PathBuf,
     pub(crate) server: crate::server::ServerState,
+    /// The slot names of every resolved function, keyed by its address (see resolver.rs).
+    layouts: HashMap<usize, Names>,
 }
 
 impl Default for Interpreter {
@@ -113,6 +117,7 @@ impl Interpreter {
             rng: seed | 1,
             project_root: PathBuf::from("."),
             server: Default::default(),
+            layouts: HashMap::new(),
         }
     }
 
@@ -252,6 +257,7 @@ impl Interpreter {
     fn run_source(&mut self, source: &str, file: Rc<str>) -> Result<(Rc<Env>, Vec<String>), RunError> {
         let program = self.compile(source, &file, true)?;
         let env = Env::new(Some(self.globals.clone()), EnvKind::Module);
+        self.resolve(&program, &env);
         let prev = std::mem::replace(&mut self.file, file);
         self.exports.push(Vec::new());
         self.hoist(&program.body, &env);
@@ -274,6 +280,7 @@ impl Interpreter {
     pub fn eval_repl(&mut self, source: &str, env: &Rc<Env>) -> Result<Value, RunError> {
         let file: Rc<str> = Rc::from("<repl>");
         let program = self.compile(source, &file, false)?;
+        self.resolve(&program, env);
         let prev = std::mem::replace(&mut self.file, file);
         self.hoist(&program.body, env);
         let mut last = Value::Nil;
@@ -304,7 +311,7 @@ impl Interpreter {
         let cases = std::mem::take(&mut self.tests);
         let mut results = Vec::new();
         for case in cases {
-            let env = Env::new(Some(case.env.clone()), EnvKind::Function);
+            let env = Env::with_layout(Some(case.env.clone()), EnvKind::Function, &case.layout);
             let prev = std::mem::replace(&mut self.file, case.file.clone());
             self.hoist(&case.body, &env);
             let r = self.exec_block(&case.body, &env);
@@ -330,15 +337,132 @@ impl Interpreter {
                 _ => stmt,
             };
             match &stmt.kind {
-                StmtKind::Func(f) | StmtKind::Component(f) => env.define(&f.name.text, self.closure(f, env)),
-                StmtKind::TypeDef(t) => env.define(&t.name.text, Value::Type(Rc::new(TypeInfo { decl: t.clone(), env: env.clone(), file: self.file.clone() }))),
+                StmtKind::Func(f) | StmtKind::Component(f) => self.define_name(env, &f.name, self.closure(f, env)),
+                StmtKind::TypeDef(t) => self.define_name(env, &t.name, Value::Type(Rc::new(TypeInfo { decl: t.clone(), env: env.clone(), file: self.file.clone() }))),
                 _ => {}
             }
         }
     }
 
     fn closure(&self, f: &Rc<FuncDecl>, env: &Rc<Env>) -> Value {
-        Value::Func(Rc::new(Closure { decl: f.clone(), env: env.clone(), file: self.file.clone(), this: None }))
+        Value::Func(Rc::new(Closure { decl: f.clone(), env: env.clone(), file: self.file.clone(), this: None, layout: self.layout_of(Rc::as_ptr(f) as usize) }))
+    }
+
+    fn layout_of(&self, key: usize) -> Names {
+        self.layouts.get(&key).cloned().unwrap_or_default()
+    }
+
+    /// Give every variable in `program` a numbered slot (see resolver.rs).
+    fn resolve(&mut self, program: &Program, env: &Rc<Env>) {
+        let layouts = {
+            let mut r = Resolver::new(&self.globals);
+            r.module(&program.body, &env.names);
+            r.finish()
+        };
+        env.ensure_slots();
+        self.layouts.extend(layouts);
+    }
+
+    // ----- variables ---------------------------------------------------------
+
+    /// Where a definition (`for x`, `catch e`, a function...) stores its value: its own scope.
+    fn def_slot<'e>(env: &'e Rc<Env>, name: &Name) -> (&'e Env, usize) {
+        if let Res::Local { depth, index } = name.res.get() {
+            if let Some(e) = env_at(env, depth) {
+                return (e, index as usize);
+            }
+        }
+        (&**env, env.slot_index(&name.text))
+    }
+
+    /// Where an assignment stores its value: the nearest existing variable, else a new one here.
+    fn target_slot<'e>(env: &'e Rc<Env>, name: &Name) -> (&'e Env, usize) {
+        if let Res::Local { depth, index } = name.res.get() {
+            if let Some(e) = env_at(env, depth) {
+                return (e, index as usize);
+            }
+        }
+        let mut e: &Env = env;
+        loop {
+            if e.kind == EnvKind::Builtins {
+                break;
+            }
+            if let Some(i) = e.index_of(&name.text) {
+                return (e, i);
+            }
+            match e.parent.as_deref() {
+                Some(p) => e = p,
+                None => break,
+            }
+        }
+        (&**env, env.slot_index(&name.text))
+    }
+
+    fn put(e: &Env, index: usize, slot: Slot) {
+        let mut slots = e.slots.borrow_mut();
+        if index >= slots.len() {
+            slots.resize_with(index + 1, Slot::empty);
+        }
+        slots[index] = slot;
+    }
+
+    fn define_name(&self, env: &Rc<Env>, name: &Name, v: Value) {
+        let (e, i) = Self::def_slot(env, name);
+        Self::put(e, i, Slot::new(v));
+    }
+
+    /// A constant, typed or `state` variable (the definition itself isn't checked against earlier ones).
+    fn declare(&self, env: &Rc<Env>, name: &Name, v: Value, constant: bool, declared: Option<TypeExpr>) {
+        let (e, i) = Self::def_slot(env, name);
+        Self::put(e, i, Slot { value: Some(v), constant, declared });
+    }
+
+    /// Assignment updates the nearest existing variable, otherwise it creates
+    /// one in the current function (decided when the program was resolved).
+    fn assign_to(&self, env: &Rc<Env>, name: &Name, v: Value, value_span: Span) -> Result<(), Flow> {
+        let (e, i) = Self::target_slot(env, name);
+        let mut slots = e.slots.borrow_mut();
+        if i >= slots.len() {
+            slots.resize_with(i + 1, Slot::empty);
+        }
+        let slot = &mut slots[i];
+        let n = &name.text;
+        if slot.constant {
+            return Err(self.err(
+                "LIP1003",
+                format!("\"{n}\" is a constant and can't be changed"),
+                value_span,
+                Some("Remove `const` where it's defined if it needs to change.".into()),
+            ));
+        }
+        if let Some(t) = &slot.declared {
+            if !self.matches_type(&v, t) {
+                return Err(self.err(
+                    "LIP2002",
+                    format!("\"{n}\" should be {}, but this is {}", with_article(&t.to_string()), with_article(&v.type_name())),
+                    value_span,
+                    Some(format!("\"{n}\" was declared as {t}.")),
+                ));
+            }
+        }
+        slot.value = Some(v);
+        Ok(())
+    }
+
+    /// Read a variable. Unset slots (a variable read before it's assigned) are "undefined".
+    fn read(&self, name: &str, res: Res, span: Span, env: &Rc<Env>) -> Result<Value, Flow> {
+        let found = match res {
+            Res::Local { depth, index } => env_at(env, depth).and_then(|e| e.slots.borrow().get(index as usize).and_then(|s| s.value.clone())),
+            Res::Global(i) => self.globals.slots.borrow().get(i as usize).and_then(|s| s.value.clone()),
+            Res::Unresolved | Res::Unknown => env.get(name),
+        };
+        match found {
+            Some(v) => Ok(v),
+            None => {
+                let names = env.names();
+                Err(self.throw(unknown_name(name, span, names.iter().map(String::as_str))))
+            }
+        }
     }
 
     fn exec_block(&mut self, body: &[Stmt], env: &Rc<Env>) -> Result<(), Flow> {
@@ -428,13 +552,13 @@ impl Interpreter {
                 }
             }
             StmtKind::For { first, second, iter, body } => self.exec_for(first, second.as_ref(), iter, body, env)?,
-            StmtKind::Func(f) | StmtKind::Component(f) => env.define(&f.name.text, self.closure(f, env)),
+            StmtKind::Func(f) | StmtKind::Component(f) => self.define_name(env, &f.name, self.closure(f, env)),
             StmtKind::State { name, ty, value } => {
                 let v = self.eval(value, env)?;
                 if let Some(t) = ty {
                     self.check_declared(&v, t, &name.text, value.span)?;
                 }
-                env.vars.borrow_mut().insert(name.text.clone(), Slot { value: v, constant: false, declared: ty.clone() });
+                self.declare(env, name, v, false, ty.clone());
             }
             StmtKind::Return(value) => {
                 let v = match value {
@@ -460,7 +584,7 @@ impl Interpreter {
                 if let Some((name, handler)) = catch {
                     if let Err(Flow::Throw(t)) = result {
                         if let Some(n) = name {
-                            env.define(&n.text, t.value.clone());
+                            self.define_name(env, n, t.value.clone());
                         }
                         result = self.exec_block(handler, env);
                     }
@@ -514,7 +638,7 @@ impl Interpreter {
                                 _ => None,
                             };
                             match value {
-                                Some(v) => env.define(&n.text, v),
+                                Some(v) => self.define_name(env, n, v),
                                 None => {
                                     let available: Vec<String> = match &module {
                                         Value::Object(o) => o.fields.borrow().keys().cloned().collect(),
@@ -545,10 +669,11 @@ impl Interpreter {
                     }
                 }
             }
-            StmtKind::TypeDef(t) => env.define(&t.name.text, Value::Type(Rc::new(TypeInfo { decl: t.clone(), env: env.clone(), file: self.file.clone() }))),
+            StmtKind::TypeDef(t) => self.define_name(env, &t.name, Value::Type(Rc::new(TypeInfo { decl: t.clone(), env: env.clone(), file: self.file.clone() }))),
             StmtKind::Test { name, body } => {
                 if self.test_mode {
-                    self.tests.push(TestCase { name: name.clone(), body: body.clone(), env: env.clone(), file: self.file.clone() });
+                    let layout = self.layout_of(body.as_ptr() as usize);
+                    self.tests.push(TestCase { name: name.clone(), body: body.clone(), env: env.clone(), file: self.file.clone(), layout });
                 }
             }
         }
@@ -563,10 +688,10 @@ impl Interpreter {
             while (step > 0 && i <= to) || (step < 0 && i >= to) {
                 match second {
                     Some(s) => {
-                        env.define(&first.text, Value::Int(index));
-                        env.define(&s.text, Value::Int(i));
+                        self.define_name(env, first, Value::Int(index));
+                        self.define_name(env, s, Value::Int(i));
                     }
-                    None => env.define(&first.text, Value::Int(i)),
+                    None => self.define_name(env, first, Value::Int(i)),
                 }
                 if !self.loop_body(body, env)? {
                     break;
@@ -594,10 +719,10 @@ impl Interpreter {
         for (key, value) in pairs {
             match second {
                 Some(s) => {
-                    env.define(&first.text, key);
-                    env.define(&s.text, value);
+                    self.define_name(env, first, key);
+                    self.define_name(env, s, value);
                 }
-                None => env.define(&first.text, if keyed { key } else { value }),
+                None => self.define_name(env, first, if keyed { key } else { value }),
             }
             if !self.loop_body(body, env)? {
                 break;
@@ -634,18 +759,23 @@ impl Interpreter {
             Target::Name(n) => {
                 let mut v = self.eval(value, env)?;
                 if let Some(op) = op {
-                    let current = self.lookup(&n.text, n.span, env)?;
-                    let target_expr = Expr { kind: ExprKind::Ident(n.text.clone()), span: n.span };
-                    v = self.binary(op, current, v, &target_expr, value)?;
+                    let current = self.read(&n.text, n.res.get(), n.span, env)?;
+                    v = match int_pair(&current, &v).and_then(|(a, b)| int_op(op, a, b)) {
+                        Some(fast) => fast,
+                        None => {
+                            let target_expr = Expr { res: Default::default(), kind: ExprKind::Ident(n.text.clone()), span: n.span };
+                            self.binary(op, current, v, &target_expr, value)?
+                        }
+                    };
                 }
                 if constant || ty.is_some() {
                     if let Some(t) = ty {
                         self.check_declared(&v, t, &n.text, value.span)?;
                     }
-                    env.vars.borrow_mut().insert(n.text.clone(), Slot { value: v, constant, declared: ty.cloned() });
+                    self.declare(env, n, v, constant, ty.cloned());
                     Ok(())
                 } else {
-                    self.assign_name(&n.text, v, env, value.span)
+                    self.assign_to(env, n, v, value.span)
                 }
             }
             Target::Field(obj_expr, name) => {
@@ -654,8 +784,13 @@ impl Interpreter {
                     Some(op) => {
                         let current = self.get_field(&obj, name, false, obj_expr)?;
                         let rhs = self.eval(value, env)?;
-                        let target_expr = Expr { kind: ExprKind::Ident(name.text.clone()), span: name.span };
-                        self.binary(op, current, rhs, &target_expr, value)?
+                        match int_pair(&current, &rhs).and_then(|(a, b)| int_op(op, a, b)) {
+                            Some(fast) => fast,
+                            None => {
+                                let target_expr = Expr { res: Default::default(), kind: ExprKind::Ident(name.text.clone()), span: name.span };
+                                self.binary(op, current, rhs, &target_expr, value)?
+                            }
+                        }
                     }
                     None => self.eval(value, env)?,
                 };
@@ -675,45 +810,6 @@ impl Interpreter {
                 self.set_index(&obj, &index, v, obj_expr, index_expr)
             }
         }
-    }
-
-    /// Assignment updates the nearest existing variable (up to module level),
-    /// otherwise it creates a new one in the current function.
-    fn assign_name(&self, name: &str, v: Value, env: &Rc<Env>, value_span: Span) -> Result<(), Flow> {
-        let mut scope = Some(env.clone());
-        while let Some(e) = scope {
-            if e.kind == EnvKind::Builtins {
-                break;
-            }
-            {
-                let mut vars = e.vars.borrow_mut();
-                if let Some(slot) = vars.get_mut(name) {
-                    if slot.constant {
-                        return Err(self.err(
-                            "LIP1003",
-                            format!("\"{name}\" is a constant and can't be changed"),
-                            value_span,
-                            Some("Remove `const` where it's defined if it needs to change.".into()),
-                        ));
-                    }
-                    if let Some(t) = &slot.declared {
-                        if !self.matches_type(&v, t) {
-                            return Err(self.err(
-                                "LIP2002",
-                                format!("\"{name}\" should be {}, but this is {}", with_article(&t.to_string()), with_article(&v.type_name())),
-                                value_span,
-                                Some(format!("\"{name}\" was declared as {t}.")),
-                            ));
-                        }
-                    }
-                    slot.value = v;
-                    return Ok(());
-                }
-            }
-            scope = e.parent.clone();
-        }
-        env.vars.borrow_mut().insert(name.to_string(), Slot::new(v));
-        Ok(())
     }
 
     fn check_declared(&self, v: &Value, t: &TypeExpr, name: &str, span: Span) -> Result<(), Flow> {
@@ -751,16 +847,6 @@ impl Interpreter {
         }
     }
 
-    fn lookup(&self, name: &str, span: Span, env: &Rc<Env>) -> Result<Value, Flow> {
-        match env.get(name) {
-            Some(v) => Ok(v),
-            None => {
-                let names = env.names();
-                Err(self.throw(unknown_name(name, span, names.iter().map(String::as_str))))
-            }
-        }
-    }
-
     // ----- expressions -----------------------------------------------------
 
     pub fn eval(&mut self, e: &Expr, env: &Rc<Env>) -> Result<Value, Flow> {
@@ -780,7 +866,7 @@ impl Interpreter {
             }
             ExprKind::Bool(b) => Value::Bool(*b),
             ExprKind::Null => Value::Nil,
-            ExprKind::Ident(name) => self.lookup(name, e.span, env)?,
+            ExprKind::Ident(name) => self.read(name, e.res.get(), e.span, env)?,
             ExprKind::List(items) => {
                 let mut out = Vec::with_capacity(items.len());
                 for item in items {
@@ -806,6 +892,9 @@ impl Interpreter {
             ExprKind::Binary(op, l, r) => {
                 let lv = self.eval(l, env)?;
                 let rv = self.eval(r, env)?;
+                if let Some(v) = int_pair(&lv, &rv).and_then(|(a, b)| int_op(*op, a, b)) {
+                    return Ok(v);
+                }
                 self.binary(*op, lv, rv, l, r)?
             }
             ExprKind::And(l, r) => Value::Bool(self.eval_cond(l, env)? && self.eval_cond(r, env)?),
@@ -988,7 +1077,8 @@ impl Interpreter {
                 }
                 if let Some(ty) = &o.ty {
                     if let Some(m) = ty.decl.methods.iter().find(|m| m.name.text == key) {
-                        return Ok(Value::Func(Rc::new(Closure { decl: m.clone(), env: ty.env.clone(), file: ty.file.clone(), this: Some(obj.clone()) })));
+                        let layout = self.layout_of(Rc::as_ptr(m) as usize);
+                        return Ok(Value::Func(Rc::new(Closure { decl: m.clone(), env: ty.env.clone(), file: ty.file.clone(), this: Some(obj.clone()), layout })));
                     }
                 }
                 if o.module.is_none() {
@@ -1140,7 +1230,7 @@ impl Interpreter {
             Value::Object(o) => match index {
                 Value::Str(k) => {
                     if o.ty.is_some() || o.module.is_some() {
-                        let name = Name { text: k.to_string(), span: index_expr.span };
+                        let name = Name { res: Default::default(), text: k.to_string(), span: index_expr.span };
                         return self.set_field(obj, &name, v, obj_expr, index_expr.span);
                     }
                     o.fields.borrow_mut().insert(k.to_string(), v);
@@ -1174,7 +1264,8 @@ impl Interpreter {
                 }
                 if let Some(ty) = &o.ty {
                     if let Some(m) = ty.decl.methods.iter().find(|m| m.name.text == key) {
-                        let c = Rc::new(Closure { decl: m.clone(), env: ty.env.clone(), file: ty.file.clone(), this: Some(obj.clone()) });
+                        let layout = self.layout_of(Rc::as_ptr(m) as usize);
+                        let c = Rc::new(Closure { decl: m.clone(), env: ty.env.clone(), file: ty.file.clone(), this: Some(obj.clone()), layout });
                         return self.call_function(&c, pos, named, span);
                     }
                 }
@@ -1210,8 +1301,8 @@ impl Interpreter {
             }
             Value::Type(t) => self.construct(&t, pos, named, span),
             Value::Method(m) => {
-                let name = Name { text: m.1.clone(), span };
-                let dummy = Expr { kind: ExprKind::Null, span };
+                let name = Name { res: Default::default(), text: m.1.clone(), span };
+                let dummy = Expr { res: Default::default(), kind: ExprKind::Null, span };
                 self.call_method(m.0.clone(), &name, pos, named, span, &dummy)
             }
             other => {
@@ -1304,7 +1395,7 @@ impl Interpreter {
             }
         }
 
-        let env = Env::new(Some(c.env.clone()), EnvKind::Function);
+        let env = Env::with_layout(Some(c.env.clone()), EnvKind::Function, &c.layout);
         if let Some(this) = &c.this {
             env.define("self", this.clone());
         }
@@ -1325,7 +1416,7 @@ impl Interpreter {
                         v
                     }
                 };
-                env.vars.borrow_mut().insert(p.name.text.clone(), Slot { value: v, constant: false, declared: p.ty.clone() });
+                self.declare(&env, &p.name, v, false, p.ty.clone());
             }
             self.hoist(&decl.body, &env);
             let value = match self.exec_block(&decl.body, &env) {
@@ -1463,7 +1554,7 @@ impl Interpreter {
         };
         let mut fields = Fields::new();
         for name in exported {
-            let value = env.vars.borrow().get(&name).map(|s| s.value.clone());
+            let value = env.get_local(&name);
             match value {
                 Some(v) => {
                     fields.insert(name, v);
@@ -1494,6 +1585,36 @@ impl Interpreter {
         let r = x.wrapping_mul(0x2545_F491_4F6C_DD1D);
         (r >> 11) as f64 / (1u64 << 53) as f64
     }
+}
+
+fn int_pair(l: &Value, r: &Value) -> Option<(i64, i64)> {
+    match (l, r) {
+        (Value::Int(a), Value::Int(b)) => Some((*a, *b)),
+        _ => None,
+    }
+}
+
+/// Arithmetic and comparisons on two Integers (the most common case) without
+/// the general dispatch. None means "take the general path", which also
+/// reports overflow and division by zero.
+#[inline]
+fn int_op(op: BinOp, a: i64, b: i64) -> Option<Value> {
+    Some(match op {
+        BinOp::Add => Value::Int(a.checked_add(b)?),
+        BinOp::Sub => Value::Int(a.checked_sub(b)?),
+        BinOp::Mul => Value::Int(a.checked_mul(b)?),
+        BinOp::Mod if b != 0 => {
+            let m = a.wrapping_rem(b);
+            Value::Int(if m != 0 && ((m < 0) != (b < 0)) { m + b } else { m })
+        }
+        BinOp::Lt => Value::Bool(a < b),
+        BinOp::Gt => Value::Bool(a > b),
+        BinOp::LtEq => Value::Bool(a <= b),
+        BinOp::GtEq => Value::Bool(a >= b),
+        BinOp::Eq => Value::Bool(a == b),
+        BinOp::NotEq => Value::Bool(a != b),
+        _ => return None,
+    })
 }
 
 fn compare(op: BinOp, ord: Option<std::cmp::Ordering>) -> bool {

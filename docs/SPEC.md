@@ -744,6 +744,7 @@ primary     = INTEGER | DECIMAL | STRING | "true" | "false" | "null" | IDENT
 | Constants | camelCase (`const appName`) |
 | Object vs map | One Object type with String keys; `obj.x` is strict, `obj["x"]` is lenient |
 | Module cycles | Error LIP3002 |
+| Scope resolution | Decided before the program runs: an assignment updates the variable of that name in the nearest enclosing function or file that assigns it, else creates a local. `lipi run` and `lipi build` share this rule (`lipi_compiler::scope`) |
 | Match syntax | Patterns directly (no `when`), `else`, `_`, guards with `if` |
 | Extra keywords | `show`, `repeat`, `break`, `continue` (from the plan's examples and loop needs) |
 | `type` blocks | A simple object model (fields and methods, no inheritance) |

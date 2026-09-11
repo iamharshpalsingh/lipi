@@ -688,7 +688,7 @@ impl Checker {
                         return;
                     }
                     let current = var.as_ref().map_or(Ty::Any, |v| v.ty);
-                    let target_expr = Expr { kind: ExprKind::Ident(name.text.clone()), span: name.span };
+                    let target_expr = Expr { res: Default::default(), kind: ExprKind::Ident(name.text.clone()), span: name.span };
                     self.binary_types(op, current, vt, &target_expr, value);
                     return;
                 }

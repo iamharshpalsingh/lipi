@@ -202,9 +202,11 @@ LIPI_TEST_POSTGRES_URL=postgres://postgres@localhost:5432/postgres cargo test -p
 
 ### Known limitations
 
-- `lipi run` is a tree-walking interpreter: fine for tools, APIs and learning,
-  but not yet fast. `lipi build --target node` output is already about 3× faster;
-  an IR/bytecode VM is planned before the WASM/native backends.
+- `lipi run` is a tree-walking interpreter. Since 1.0 work began, variables
+  are resolved to numbered slots before a program runs, common Integer
+  operations take a fast path, and memory comes from mimalloc: about 1.6–2.1×
+  faster than 0.8 (fib(30) went from 1.8 s to 1.0 s). A bytecode VM is the next
+  step. For heavy computation, `lipi build --target node` output is faster still.
 - JavaScript builds don't include `database` and `server` yet (they're server-side).
 - The HTTP client uses the system `curl` for its transport (`lipi doctor`
   checks for it).

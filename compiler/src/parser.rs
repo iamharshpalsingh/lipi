@@ -117,7 +117,7 @@ impl<'a> Parser<'a> {
         match self.peek().clone() {
             Tok::Ident(text) => {
                 let span = self.advance().span;
-                Ok(Name { text, span })
+                Ok(Name { res: Default::default(), text, span })
             }
             Tok::Kw(k) => Err(Diagnostic::error(format!("\"{}\" is a keyword, so it can't be used as {what}", k.as_str()), self.span())
                 .with_code("LIP1005")
@@ -138,11 +138,11 @@ impl<'a> Parser<'a> {
         match self.peek().clone() {
             Tok::Ident(text) => {
                 let span = self.advance().span;
-                Ok(Name { text, span })
+                Ok(Name { res: Default::default(), text, span })
             }
             Tok::Kw(k) => {
                 let span = self.advance().span;
-                Ok(Name { text: k.as_str().to_string(), span })
+                Ok(Name { res: Default::default(), text: k.as_str().to_string(), span })
             }
             _ => Err(self.unexpected("a field name")),
         }
@@ -387,14 +387,14 @@ impl<'a> Parser<'a> {
         if is_path(&expr) && self.command_arg_ahead() {
             let args = self.parse_command_args()?;
             let span = expr.span.to(self.prev_span());
-            expr = Expr { kind: ExprKind::Call { callee: Box::new(expr), args }, span };
+            expr = Expr { res: Default::default(), kind: ExprKind::Call { callee: Box::new(expr), args }, span };
         }
         // A trailing block becomes a function passed as the last argument.
         let block_ahead = self.at_ident("with") || (self.at(&Tok::Newline) && matches!(self.peek_at(1), Tok::Indent));
         if block_ahead && is_path(&expr) {
             // `server.before with request` + block: a call whose only argument is the block
             let span = expr.span;
-            expr = Expr { kind: ExprKind::Call { callee: Box::new(expr), args: Vec::new() }, span };
+            expr = Expr { res: Default::default(), kind: ExprKind::Call { callee: Box::new(expr), args: Vec::new() }, span };
         }
         if matches!(expr.kind, ExprKind::Call { .. }) && block_ahead {
             let block = self.parse_trailing_block()?;
@@ -472,13 +472,13 @@ impl<'a> Parser<'a> {
             }
         }
         let body = self.parse_block("this line", start)?;
-        let decl = FuncDecl { name: Name { text: "<block>".into(), span: start }, params, ret: None, body, is_async: false, is_lambda: true, span: start };
-        Ok(Expr { kind: ExprKind::Lambda(Rc::new(decl)), span: start })
+        let decl = FuncDecl { name: Name { res: Default::default(), text: "<block>".into(), span: start }, params, ret: None, body, is_async: false, is_lambda: true, span: start };
+        Ok(Expr { res: Default::default(), kind: ExprKind::Lambda(Rc::new(decl)), span: start })
     }
 
     fn to_target(&self, expr: Expr) -> PResult<Target> {
         match expr.kind {
-            ExprKind::Ident(text) => Ok(Target::Name(Name { text, span: expr.span })),
+            ExprKind::Ident(text) => Ok(Target::Name(Name { res: Default::default(), text, span: expr.span })),
             ExprKind::Field { object, name, optional: false } => Ok(Target::Field(*object, name)),
             ExprKind::Index { object, index } => Ok(Target::Index(*object, *index)),
             _ => Err(Diagnostic::error("can't assign to this", expr.span).with_code("LIP0006").with_hint(
@@ -821,7 +821,7 @@ impl<'a> Parser<'a> {
         }
         let otherwise = self.parse_expression()?;
         let span = value.span.to(otherwise.span);
-        Ok(Expr { kind: ExprKind::IfElse { cond: Box::new(cond), then: Box::new(value), otherwise: Box::new(otherwise) }, span })
+        Ok(Expr { res: Default::default(), kind: ExprKind::IfElse { cond: Box::new(cond), then: Box::new(value), otherwise: Box::new(otherwise) }, span })
     }
 
     fn lambda_ahead(&self) -> bool {
@@ -861,8 +861,8 @@ impl<'a> Parser<'a> {
         let body = self.parse_expression()?;
         let span = start.to(body.span);
         let ret = Stmt { span: body.span, kind: StmtKind::Return(Some(body)) };
-        let decl = FuncDecl { name: Name { text: "<lambda>".into(), span: start }, params, ret: None, body: vec![ret], is_async: false, is_lambda: true, span };
-        Ok(Expr { kind: ExprKind::Lambda(Rc::new(decl)), span })
+        let decl = FuncDecl { name: Name { res: Default::default(), text: "<lambda>".into(), span: start }, params, ret: None, body: vec![ret], is_async: false, is_lambda: true, span };
+        Ok(Expr { res: Default::default(), kind: ExprKind::Lambda(Rc::new(decl)), span })
     }
 
     fn parse_coalesce(&mut self) -> PResult<Expr> {
@@ -870,7 +870,7 @@ impl<'a> Parser<'a> {
         while self.eat(&Tok::QuestionQuestion) {
             let right = self.parse_or()?;
             let span = left.span.to(right.span);
-            left = Expr { kind: ExprKind::Coalesce(Box::new(left), Box::new(right)), span };
+            left = Expr { res: Default::default(), kind: ExprKind::Coalesce(Box::new(left), Box::new(right)), span };
         }
         Ok(left)
     }
@@ -880,7 +880,7 @@ impl<'a> Parser<'a> {
         while self.eat_kw(Kw::Or) {
             let right = self.parse_and()?;
             let span = left.span.to(right.span);
-            left = Expr { kind: ExprKind::Or(Box::new(left), Box::new(right)), span };
+            left = Expr { res: Default::default(), kind: ExprKind::Or(Box::new(left), Box::new(right)), span };
         }
         Ok(left)
     }
@@ -890,7 +890,7 @@ impl<'a> Parser<'a> {
         while self.eat_kw(Kw::And) {
             let right = self.parse_not()?;
             let span = left.span.to(right.span);
-            left = Expr { kind: ExprKind::And(Box::new(left), Box::new(right)), span };
+            left = Expr { res: Default::default(), kind: ExprKind::And(Box::new(left), Box::new(right)), span };
         }
         Ok(left)
     }
@@ -900,7 +900,7 @@ impl<'a> Parser<'a> {
             let start = self.advance().span;
             let inner = self.parse_not()?;
             let span = start.to(inner.span);
-            return Ok(Expr { kind: ExprKind::Unary(UnaryOp::Not, Box::new(inner)), span });
+            return Ok(Expr { res: Default::default(), kind: ExprKind::Unary(UnaryOp::Not, Box::new(inner)), span });
         }
         self.parse_comparison()
     }
@@ -930,7 +930,7 @@ impl<'a> Parser<'a> {
             return Err(Diagnostic::error("to combine two comparisons, use `and`", self.span()).with_hint("For example: 0 < x and x < 10"));
         }
         let span = left.span.to(right.span);
-        Ok(Expr { kind: ExprKind::Binary(op, Box::new(left), Box::new(right)), span })
+        Ok(Expr { res: Default::default(), kind: ExprKind::Binary(op, Box::new(left), Box::new(right)), span })
     }
 
     fn parse_range(&mut self) -> PResult<Expr> {
@@ -947,7 +947,7 @@ impl<'a> Parser<'a> {
             None
         };
         let span = start.span.to(self.prev_span());
-        Ok(Expr { kind: ExprKind::Range { start: Box::new(start), end: Box::new(end), step }, span })
+        Ok(Expr { res: Default::default(), kind: ExprKind::Range { start: Box::new(start), end: Box::new(end), step }, span })
     }
 
     fn parse_additive(&mut self) -> PResult<Expr> {
@@ -961,7 +961,7 @@ impl<'a> Parser<'a> {
             self.advance();
             let right = self.parse_multiplicative()?;
             let span = left.span.to(right.span);
-            left = Expr { kind: ExprKind::Binary(op, Box::new(left), Box::new(right)), span };
+            left = Expr { res: Default::default(), kind: ExprKind::Binary(op, Box::new(left), Box::new(right)), span };
         }
         Ok(left)
     }
@@ -978,7 +978,7 @@ impl<'a> Parser<'a> {
             self.advance();
             let right = self.parse_unary()?;
             let span = left.span.to(right.span);
-            left = Expr { kind: ExprKind::Binary(op, Box::new(left), Box::new(right)), span };
+            left = Expr { res: Default::default(), kind: ExprKind::Binary(op, Box::new(left), Box::new(right)), span };
         }
         Ok(left)
     }
@@ -988,12 +988,12 @@ impl<'a> Parser<'a> {
         if self.eat(&Tok::Minus) {
             let inner = self.parse_unary()?;
             let span = start.to(inner.span);
-            return Ok(Expr { kind: ExprKind::Unary(UnaryOp::Neg, Box::new(inner)), span });
+            return Ok(Expr { res: Default::default(), kind: ExprKind::Unary(UnaryOp::Neg, Box::new(inner)), span });
         }
         if self.eat_kw(Kw::Await) {
             let inner = self.parse_unary()?;
             let span = start.to(inner.span);
-            return Ok(Expr { kind: ExprKind::Await(Box::new(inner)), span });
+            return Ok(Expr { res: Default::default(), kind: ExprKind::Await(Box::new(inner)), span });
         }
         self.parse_power()
     }
@@ -1003,7 +1003,7 @@ impl<'a> Parser<'a> {
         if self.eat(&Tok::StarStar) {
             let exp = self.parse_unary()?;
             let span = base.span.to(exp.span);
-            return Ok(Expr { kind: ExprKind::Binary(BinOp::Pow, Box::new(base), Box::new(exp)), span });
+            return Ok(Expr { res: Default::default(), kind: ExprKind::Binary(BinOp::Pow, Box::new(base), Box::new(exp)), span });
         }
         Ok(base)
     }
@@ -1016,20 +1016,20 @@ impl<'a> Parser<'a> {
                     self.advance();
                     let args = self.parse_args()?;
                     let span = expr.span.to(self.prev_span());
-                    expr = Expr { kind: ExprKind::Call { callee: Box::new(expr), args }, span };
+                    expr = Expr { res: Default::default(), kind: ExprKind::Call { callee: Box::new(expr), args }, span };
                 }
                 Tok::Dot | Tok::QuestionDot => {
                     let optional = self.advance().tok == Tok::QuestionDot;
                     let name = self.field_name()?;
                     let span = expr.span.to(name.span);
-                    expr = Expr { kind: ExprKind::Field { object: Box::new(expr), name, optional }, span };
+                    expr = Expr { res: Default::default(), kind: ExprKind::Field { object: Box::new(expr), name, optional }, span };
                 }
                 Tok::LBracket => {
                     self.advance();
                     let index = self.parse_expression()?;
                     self.expect(&Tok::RBracket, "']'")?;
                     let span = expr.span.to(self.prev_span());
-                    expr = Expr { kind: ExprKind::Index { object: Box::new(expr), index: Box::new(index) }, span };
+                    expr = Expr { res: Default::default(), kind: ExprKind::Index { object: Box::new(expr), index: Box::new(index) }, span };
                 }
                 _ => break,
             }
@@ -1099,7 +1099,7 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let inner = self.parse_expression()?;
                 self.expect(&Tok::RParen, "a closing ')'")?;
-                return Ok(Expr { kind: inner.kind, span: span.to(self.prev_span()) });
+                return Ok(Expr { res: Default::default(), kind: inner.kind, span: span.to(self.prev_span()) });
             }
             Tok::LBracket => {
                 self.advance();
@@ -1119,10 +1119,10 @@ impl<'a> Parser<'a> {
                 while !self.eat(&Tok::RBrace) {
                     let kspan = self.span();
                     let (key, ident_key) = match self.peek().clone() {
-                        Tok::Str(_) => (Name { text: self.plain_string("a key")?, span: kspan }, false),
+                        Tok::Str(_) => (Name { res: Default::default(), text: self.plain_string("a key")?, span: kspan }, false),
                         Tok::Int(n) => {
                             self.advance();
-                            (Name { text: n.to_string(), span: kspan }, false)
+                            (Name { res: Default::default(), text: n.to_string(), span: kspan }, false)
                         }
                         _ => (self.field_name()?, true),
                     };
@@ -1130,7 +1130,7 @@ impl<'a> Parser<'a> {
                         self.parse_expression()?
                     } else if ident_key && matches!(self.peek(), Tok::Comma | Tok::RBrace) {
                         // `{name, age}` is short for `{name: name, age: age}`
-                        Expr { kind: ExprKind::Ident(key.text.clone()), span: key.span }
+                        Expr { res: Default::default(), kind: ExprKind::Ident(key.text.clone()), span: key.span }
                     } else {
                         return Err(self.unexpected("':' after the key").with_hint("Objects look like: { name: \"Dezy\", age: 25 }"));
                     };
@@ -1154,12 +1154,12 @@ impl<'a> Parser<'a> {
             }
             _ => return Err(self.unexpected("a value")),
         };
-        Ok(Expr { kind, span: span.to(self.prev_span()) })
+        Ok(Expr { res: Default::default(), kind, span: span.to(self.prev_span()) })
     }
 
     fn string_expr(&mut self, parts: Vec<StrPart>, span: Span) -> PResult<Expr> {
         if let [StrPart::Lit(s)] = parts.as_slice() {
-            return Ok(Expr { kind: ExprKind::Str(s.clone()), span });
+            return Ok(Expr { res: Default::default(), kind: ExprKind::Str(s.clone()), span });
         }
         let mut out = Vec::new();
         for part in parts {
@@ -1179,7 +1179,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        Ok(Expr { kind: ExprKind::Template(out), span })
+        Ok(Expr { res: Default::default(), kind: ExprKind::Template(out), span })
     }
 }
 

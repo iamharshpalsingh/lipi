@@ -12,6 +12,7 @@ pub mod lexer;
 pub mod lint;
 pub mod parser;
 pub mod resolve;
+pub mod scope;
 pub mod suggest;
 
 pub use diagnostics::{Diagnostic, Severity, Span};

@@ -11,6 +11,7 @@ mod server;
 pub mod interp;
 mod json;
 mod methods;
+mod resolver;
 pub mod task;
 pub mod value;
 

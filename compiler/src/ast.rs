@@ -1,8 +1,23 @@
 //! The abstract syntax tree produced by the parser.
 
 use crate::diagnostics::Span;
+use std::cell::Cell;
 use std::fmt;
 use std::rc::Rc;
+
+/// Where a variable lives. The interpreter's resolver fills this in before a
+/// program runs, so variables are read and written by position, not by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Res {
+    #[default]
+    Unresolved,
+    /// A slot in the environment `depth` levels up (0 = the current function).
+    Local { depth: u16, index: u32 },
+    /// A built-in (standard library) value.
+    Global(u32),
+    /// Not defined anywhere the program can see.
+    Unknown,
+}
 
 #[derive(Debug, Clone)]
 pub struct Program {
@@ -15,6 +30,7 @@ pub type Block = Vec<Stmt>;
 pub struct Name {
     pub text: String,
     pub span: Span,
+    pub res: Cell<Res>,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +144,8 @@ impl fmt::Display for TypeExpr {
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
+    /// For `Ident`: where the variable lives (see `Res`).
+    pub res: Cell<Res>,
 }
 
 #[derive(Debug, Clone)]

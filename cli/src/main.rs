@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 const HELP: &str = "\
 LiPi — Unified Development Language. Easy to start. Hard to outgrow.
 

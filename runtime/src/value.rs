@@ -31,6 +31,8 @@ pub struct Closure {
     pub file: Rc<str>,
     /// The instance a method is bound to (available as `self`).
     pub this: Option<Value>,
+    /// The names of the function's variable slots.
+    pub layout: Names,
 }
 
 pub type NativeFn = dyn Fn(&mut Interpreter, &mut Args) -> Result<Value, Flow>;
@@ -306,14 +308,19 @@ pub enum EnvKind {
 }
 
 pub struct Slot {
-    pub value: Value,
+    /// None until the variable is first assigned.
+    pub value: Option<Value>,
     pub constant: bool,
     pub declared: Option<TypeExpr>,
 }
 
 impl Slot {
     pub fn new(value: Value) -> Slot {
-        Slot { value, constant: false, declared: None }
+        Slot { value: Some(value), constant: false, declared: None }
+    }
+
+    pub fn empty() -> Slot {
+        Slot { value: None, constant: false, declared: None }
     }
 }
 
@@ -338,44 +345,98 @@ impl std::hash::Hasher for FnvHasher {
 
 pub type VarMap = HashMap<String, Slot, std::hash::BuildHasherDefault<FnvHasher>>;
 
-/// Variables of one function call (or module). Blocks such as `if` and
-/// `for` don't create their own scope.
+/// The names of an environment's slots, in slot order. All the environments
+/// of one function share a single list, made when the program is resolved.
+pub type Names = Rc<RefCell<Vec<Rc<str>>>>;
+
+/// Variables of one function call (or module), in numbered slots. Blocks
+/// such as `if` and `for` don't create their own scope.
 pub struct Env {
-    pub vars: RefCell<VarMap>,
+    pub slots: RefCell<Vec<Slot>>,
+    pub names: Names,
     pub parent: Option<Rc<Env>>,
     pub kind: EnvKind,
 }
 
+/// The environment `depth` levels up from `env`.
+pub fn env_at(env: &Rc<Env>, depth: u16) -> Option<&Env> {
+    let mut e: &Env = env;
+    for _ in 0..depth {
+        e = e.parent.as_deref()?;
+    }
+    Some(e)
+}
+
 impl Env {
+    /// An environment whose names grow as variables are defined (modules, built-ins).
     pub fn new(parent: Option<Rc<Env>>, kind: EnvKind) -> Rc<Env> {
-        Rc::new(Env { vars: RefCell::new(VarMap::default()), parent, kind })
+        Rc::new(Env { slots: RefCell::new(Vec::new()), names: Names::default(), parent, kind })
     }
 
-    pub fn get(&self, name: &str) -> Option<Value> {
-        if let Some(slot) = self.vars.borrow().get(name) {
-            return Some(slot.value.clone());
+    /// A function call's environment: one empty slot per variable in `names`.
+    pub fn with_layout(parent: Option<Rc<Env>>, kind: EnvKind, names: &Names) -> Rc<Env> {
+        let slots = (0..names.borrow().len()).map(|_| Slot::empty()).collect();
+        Rc::new(Env { slots: RefCell::new(slots), names: names.clone(), parent, kind })
+    }
+
+    pub fn index_of(&self, name: &str) -> Option<usize> {
+        self.names.borrow().iter().position(|n| &**n == name)
+    }
+
+    /// Make sure there's a slot for every name (after the names list grew).
+    pub fn ensure_slots(&self) {
+        let n = self.names.borrow().len();
+        let mut slots = self.slots.borrow_mut();
+        if slots.len() < n {
+            slots.resize_with(n, Slot::empty);
         }
-        self.parent.as_ref()?.get(name)
+    }
+
+    /// The slot for `name` in this environment, adding one if needed.
+    pub fn slot_index(&self, name: &str) -> usize {
+        let i = match self.index_of(name) {
+            Some(i) => i,
+            None => {
+                let mut names = self.names.borrow_mut();
+                names.push(Rc::from(name));
+                names.len() - 1
+            }
+        };
+        self.ensure_slots();
+        i
+    }
+
+    /// A variable of this environment (not its parents), by name.
+    pub fn get_local(&self, name: &str) -> Option<Value> {
+        let i = self.index_of(name)?;
+        self.slots.borrow().get(i)?.value.clone()
+    }
+
+    /// A variable by name, looking outward.
+    pub fn get(&self, name: &str) -> Option<Value> {
+        match self.get_local(name) {
+            Some(v) => Some(v),
+            None => self.parent.as_ref()?.get(name),
+        }
     }
 
     pub fn define(&self, name: &str, value: Value) {
-        let mut vars = self.vars.borrow_mut();
-        match vars.get_mut(name) {
-            Some(slot) => *slot = Slot::new(value),
-            None => {
-                vars.insert(name.to_string(), Slot::new(value));
-            }
-        }
+        let i = self.slot_index(name);
+        self.slots.borrow_mut()[i] = Slot::new(value);
     }
 
-    /// Every visible name, sorted (used for "did you mean" suggestions).
+    /// Every visible variable that has a value, sorted (used for "did you mean" suggestions).
     pub fn names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.vars.borrow().keys().cloned().collect();
+        let mut out: Vec<String> = {
+            let names = self.names.borrow();
+            let slots = self.slots.borrow();
+            names.iter().zip(slots.iter()).filter(|(_, s)| s.value.is_some()).map(|(n, _)| n.to_string()).collect()
+        };
         if let Some(p) = &self.parent {
-            names.extend(p.names());
+            out.extend(p.names());
         }
-        names.sort();
-        names.dedup();
-        names
+        out.sort();
+        out.dedup();
+        out
     }
 }

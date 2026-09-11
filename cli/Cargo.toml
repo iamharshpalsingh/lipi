@@ -16,6 +16,8 @@ sha2 = "0.10"
 semver = "1"
 flate2 = "1"
 tar = "0.4"
+# A fast memory allocator: the interpreter allocates small objects constantly.
+mimalloc = { version = "0.1", default-features = false }
 
 [build-dependencies]
 embed-resource = "2"
