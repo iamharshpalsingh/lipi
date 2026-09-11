@@ -531,7 +531,15 @@ page "/orders/:id" with url         # url.path, url.params.id, url.query
   | `image source, alt: "…"` | image |
   | `element "tag", …` + block | any other element except script/style/embeds (LIP6003) |
 
-  Every element also takes `class:`, `id:`, `style:` and `title:`. Text is
+  Every element also takes `class:`, `id:`, `style:` and `title:`, and
+  four style options for things an inline style can't do:
+  `hover:` (while the pointer is over it), `focus:` (when it's focused with
+  the keyboard), `mobile:` (screens up to 720 px wide) and `desktop:`
+  (wider screens). Each takes declarations like `style:`, for example
+  `button "Save", hover: "background: #B83A22;", mobile: "width: 100%;"`.
+  They take priority over `style:`. `mobile: "display: none;"` and
+  `desktop: "display: none;"` show different things on phones and on
+  computers. Text is
   always inserted as text, never as HTML, and `javascript:` addresses are
   refused (LIP6003). LiPi's built-in stylesheet gives every element a
   default look.

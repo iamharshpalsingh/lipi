@@ -2,7 +2,7 @@
   "name": "lipi",
   "displayName": "LiPi",
   "description": "LiPi language support: errors as you type, completion, hover docs, go to definition, formatting, syntax highlighting and file icons.",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "publisher": "lipi-lang",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/iamharshpalsingh/lipi" },

@@ -112,6 +112,8 @@ async function main() {
     await settle();
     console.log(`--- ${step}\n` + html(app));
   }
+  const rules = document.getElementById("lipi-rules");
+  if (rules) console.log("--- rules\n" + rules.textContent);
   const errors = all(body).filter((e) => e.getAttribute("class") === "lipi-error");
   for (const e of errors) console.log("--- error on the page\n" + e.textContent);
 }

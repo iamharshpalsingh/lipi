@@ -66,6 +66,25 @@ fn ui_programs_explain_how_to_run_them() {
 }
 
 #[test]
+fn hover_and_screen_size_styles_become_css_rules() {
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("node isn't installed; skipping the style test");
+        return;
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let out_dir = std::env::temp_dir().join(format!("lipi-styles-test-{}", std::process::id()));
+    let build = Command::new(env!("CARGO_BIN_EXE_lipi")).args(["build", "tests/ui/styles.lipi", "--out", &out_dir.to_string_lossy()]).current_dir(root).output().unwrap();
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    let run = Command::new("node").arg(root.join("cli").join("tests").join("ui_dom.js")).arg(out_dir.join("app.js")).output().unwrap();
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+    assert!(out.contains("class=\"lipi-button lipi-hover-"), "{out}");
+    assert!(out.contains(":hover { background: #B83A22 !important }"), "{out}");
+    assert!(out.contains("@media (max-width: 720px) { .lipi-mobile-") && out.contains("display: none !important"), "{out}");
+    assert!(out.contains("@media (min-width: 721px) { .lipi-desktop-") && out.contains("gap: 24px !important"), "{out}");
+}
+
+#[test]
 fn keyed_components_keep_their_state_when_the_list_changes() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let check = Command::new(env!("CARGO_BIN_EXE_lipi")).args(["check", "tests/ui/keyed.lipi"]).current_dir(root).env("NO_COLOR", "1").output().unwrap();

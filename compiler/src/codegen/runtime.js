@@ -1415,7 +1415,34 @@ function $start(entry) {
 // Redraws happen after every event handler, after state changes, and when an
 // awaited handler finishes.
 
-const $ui = { pages: [], stack: null, instances: new Map(), seen: null, path: [], root: null, old: [], scheduled: false, started: false };
+const $ui = { pages: [], stack: null, instances: new Map(), seen: null, path: [], root: null, old: [], scheduled: false, started: false, rules: new Set() };
+/// Style options that become CSS rules (inline styles can't express them).
+const UI_STATE_STYLES = new Set(["hover", "focus", "mobile", "desktop"]);
+const MOBILE_MAX = 720;
+
+/// `hover: "..."`, `focus:`, `mobile:` and `desktop:`: a class for the element
+/// plus one CSS rule per distinct style, kept in a <style id="lipi-rules">.
+/// Declarations get !important so they win over the element's inline `style:`.
+function uiRuleClass(kind, css, s) {
+  if (/[{}<>]/.test(css)) $fail("LIP6003", `${kind} styles can't contain { } < or >`, s, `Write plain declarations, for example: ${kind}: "color: #B83A22;"`);
+  const decls = css.split(";").map((d) => d.trim()).filter((d) => d !== "").map((d) => (/!important$/i.test(d) ? d : d + " !important")).join("; ");
+  let h = 0;
+  for (const c of kind + decls) h = (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0;
+  const cls = `lipi-${kind}-${h.toString(36)}`;
+  if (!$ui.rules.has(cls)) {
+    $ui.rules.add(cls);
+    const sel = kind === "hover" ? `.${cls}:hover` : kind === "focus" ? `.${cls}:focus-visible` : `.${cls}`;
+    const rule = kind === "mobile" ? `@media (max-width: ${MOBILE_MAX}px) { ${sel} { ${decls} } }`
+      : kind === "desktop" ? `@media (min-width: ${MOBILE_MAX + 1}px) { ${sel} { ${decls} } }`
+      : `${sel} { ${decls} }`;
+    if (typeof document !== "undefined") {
+      let el = document.getElementById("lipi-rules");
+      if (!el) { el = document.createElement("style"); el.id = "lipi-rules"; document.head.appendChild(el); }
+      el.textContent += rule + "\n";
+    }
+  }
+  return cls;
+}
 const BLOCKED_TAGS = new Set(["script", "style", "iframe", "object", "embed", "link", "meta", "base", "frame", "frameset", "template"]);
 const UI_OPTIONS = { heading: ["level"], button: ["disabled"], link: ["to"], image: ["alt"], field: ["placeholder", "type", "disabled"], checkbox: ["disabled"] };
 const UI_CSS = `
@@ -1425,7 +1452,8 @@ const UI_CSS = `
 .lipi-column { display: flex; flex-direction: column; gap: .5rem; }
 .lipi-heading { margin: .25em 0 .5em; line-height: 1.2; }
 .lipi-text { margin: .35em 0; line-height: 1.55; }
-.lipi-button { font: inherit; background: #D2452A; color: #fff; border: 0; border-radius: 8px; padding: .45rem 1rem; cursor: pointer; }
+.lipi-button { font: inherit; background: #D2452A; color: #fff; border: 0; border-radius: 8px; padding: .45rem 1rem; cursor: pointer; transition: background .15s, color .15s, transform .15s, box-shadow .15s; }
+.lipi-link { transition: background .15s, color .15s; }
 .lipi-button:hover { background: #B83A22; }
 .lipi-button:disabled { opacity: .5; cursor: default; }
 .lipi-button:focus-visible, .lipi-field:focus-visible, .lipi-link:focus-visible { outline: 2px solid #17120E; outline-offset: 2px; }
@@ -1502,8 +1530,9 @@ function common(kind, named, s) {
   for (const [k, v] of Object.entries(named)) {
     if (k === "class") a.class += " " + display(v);
     else if (k === "id" || k === "style" || k === "title") a[k] = display(v);
+    else if (UI_STATE_STYLES.has(k)) a.class += " " + uiRuleClass(k, display(v), s);
     else if (!own.includes(k)) {
-      const all = ["class", "id", "style", "title", ...own];
+      const all = ["class", "id", "style", "title", "hover", "focus", "mobile", "desktop", ...own];
       $fail("LIP5008", `${kind} has no option "${k}"`, s, didYouMean(k, all) || `Its options are: ${all.join(", ")}`);
     }
   }

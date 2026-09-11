@@ -15,7 +15,7 @@ export component Footer(count)
     text "{count} items", class: "muted"
 
 page "/"
-    heading "Todos", level: 1
+    heading "Todos", level: 1, mobile: "font-size: 24px;"
     field draft, placeholder: "What needs doing?" with value
         draft = value
     button "Add", disabled: draft == ""

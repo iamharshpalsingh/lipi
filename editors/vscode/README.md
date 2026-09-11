@@ -17,11 +17,10 @@ full path of `lipi` / `lipi.exe`.
 
 ## Install
 
-Install the packaged `lipi-0.2.0.vsix` from the Extensions view (**…** → *Install from VSIX…*), or run:
-
-```sh
-code --install-extension lipi-0.2.0.vsix
-```
+The LiPi installer adds this extension automatically when VS Code is
+installed. To add it by hand, use the `lipi-<version>.vsix` file from the LiPi
+release: in the Extensions view choose **…** → *Install from VSIX…*, or run
+`code --install-extension lipi-<version>.vsix`.
 
 To build the package yourself:
 

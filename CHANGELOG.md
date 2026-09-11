@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0
+
+- LiPi UI: every element takes `hover:`, `focus:`, `mobile:` (screens up to
+  720 px) and `desktop:` style options, so responsive layouts and hover
+  effects need no CSS file: `button "Save", hover: "background: #B83A22;"`.
+- Buttons and links animate their colour changes.
+- The installer updates LiPi even while VS Code or `lipi dev` is using it.
+
 ## 1.0.3
 
 - `lipi dev` with a file that doesn't exist reports it right away. Before,

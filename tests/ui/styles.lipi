@@ -1,0 +1,5 @@
+# hover:, mobile: and desktop: become CSS rules.
+page "/"
+    button "Save", style: "background: #D2452A;", hover: "background: #B83A22;", mobile: "width: 100%;"
+    row desktop: "gap: 24px;"
+        text "Wide screens only", mobile: "display: none;"
