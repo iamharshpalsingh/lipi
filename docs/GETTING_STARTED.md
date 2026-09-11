@@ -5,7 +5,9 @@ with a database, and a web app, in about half an hour.
 
 ## 1. Install
 
-**From a release:** unzip the LiPi release for your system, then:
+**From a release:** download the archive for your system from
+[github.com/iamharshpalsingh/lipi/releases](https://github.com/iamharshpalsingh/lipi/releases),
+unzip it, then:
 
 - **Windows:** double-click `install.cmd` (or run `.\install.ps1`). No
   administrator rights are needed.
@@ -19,7 +21,8 @@ lipi doctor
 ```
 
 **From source:** install [Rust](https://rustup.rs), then run
-`cargo install --path cli` in the LiPi folder. Node.js is only needed to run
+`git clone https://github.com/iamharshpalsingh/lipi`, and in that folder
+`cargo install --path cli`. Node.js is only needed to run
 `lipi build --target node` output.
 
 **Editor:** the release includes the VS Code extension, and the installer adds

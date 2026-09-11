@@ -34,7 +34,8 @@ get "/users/:id" with request
 
 ## Install
 
-**Release archive:** unzip `lipi-<version>-<your system>`, then run `install.cmd`
+**Release archive:** download `lipi-<version>-<your system>` from
+[Releases](https://github.com/iamharshpalsingh/lipi/releases), unzip it, then run `install.cmd`
 on Windows (no administrator rights needed) or `./install.sh` on Linux and
 macOS. The installer puts `lipi` on your PATH and adds the VS Code
 extension if VS Code is installed. Then follow
@@ -43,6 +44,8 @@ extension if VS Code is installed. Then follow
 **From source:** install [Rust](https://rustup.rs) (stable), then:
 
 ```sh
+git clone https://github.com/iamharshpalsingh/lipi
+cd lipi
 cargo install --path cli        # or: cargo build --release
 lipi examples/hello.lipi        # Hello, LiPi!
 ```
