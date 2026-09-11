@@ -1,7 +1,5 @@
 # LiPi for Visual Studio Code
 
-<img src="images/icon.png" width="64" alt="LiPi">
-
 Language support for **LiPi**, the Unified Development Language.
 
 - **Errors and warnings as you type**, with the same codes and hints as `lipi check` and `lipi lint`
