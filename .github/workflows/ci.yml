@@ -1,0 +1,26 @@
+# Builds LiPi and runs every test on Windows, Linux and macOS.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --workspace --no-fail-fast
+      - name: Examples are formatted
+        run: cargo run -q -p lipi -- format --check examples

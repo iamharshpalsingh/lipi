@@ -1,4 +1,4 @@
-# LiPi Language Specification — v0.1 baseline (implementation 0.3-dev)
+# LiPi Language Specification — v1.0
 
 > **LiPi** — Unified Development Language. *Ancient roots. Modern code.*
 > Easy to start. Hard to outgrow.

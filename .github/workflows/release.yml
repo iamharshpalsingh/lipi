@@ -1,0 +1,89 @@
+# Pushing a tag like v1.0.0 builds LiPi for every platform and publishes a
+# GitHub release with the archives, their SHA-256 checksums and the VS Code
+# extension.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, name: windows-x64, exe: lipi.exe }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, name: linux-x64, exe: lipi }
+          - { os: macos-latest, target: aarch64-apple-darwin, name: macos-arm64, exe: lipi }
+          - { os: macos-13, target: x86_64-apple-darwin, name: macos-x64, exe: lipi }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test
+        run: cargo test --workspace
+      - name: Build
+        run: cargo build --release -p lipi --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          dir="lipi-${GITHUB_REF_NAME#v}-${{ matrix.name }}"
+          mkdir -p "$dir"
+          cp "target/${{ matrix.target }}/release/${{ matrix.exe }}" "$dir/"
+          cp README.md LICENSE "$dir/"
+          cp -r docs examples "$dir/"
+          if [ "${{ matrix.exe }}" = "lipi.exe" ]; then
+            cp scripts/install.ps1 scripts/install.cmd "$dir/"
+            7z a "$dir.zip" "$dir" > /dev/null
+            echo "ASSET=$dir.zip" >> "$GITHUB_ENV"
+          else
+            cp scripts/install.sh "$dir/"
+            chmod +x "$dir/install.sh" "$dir/lipi"
+            tar czf "$dir.tar.gz" "$dir"
+            echo "ASSET=$dir.tar.gz" >> "$GITHUB_ENV"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.ASSET }}
+
+  vscode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Package the extension
+        working-directory: editors/vscode
+        run: |
+          npm ci
+          npx --yes @vscode/vsce package --skip-license --allow-missing-repository
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vscode
+          path: editors/vscode/*.vsix
+
+  release:
+    needs: [build, vscode]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Checksums
+        run: cd assets && sha256sum * > SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          generate_release_notes: true

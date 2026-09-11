@@ -32,16 +32,25 @@ get "/users/:id" with request
     return {id: request.params.id, name: name}
 ```
 
-## Quick start
+## Install
 
-You need [Rust](https://rustup.rs) (stable). On Windows with the GNU toolchain,
-also install a MinGW GCC (for example `winget install BrechtSanders.WinLibs.POSIX.UCRT`),
-which the SQLite driver needs.
+**Release archive:** unzip `lipi-1.0.0-<your system>`, then run `install.cmd`
+on Windows (no administrator rights needed) or `./install.sh` on Linux and
+macOS. The installer puts `lipi` on your PATH and adds the VS Code
+extension if VS Code is installed. Then follow
+[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
+
+**From source:** install [Rust](https://rustup.rs) (stable), then:
 
 ```sh
-cargo build --release
-./target/release/lipi examples/hello.lipi      # Hello, LiPi!
+cargo install --path cli        # or: cargo build --release
+lipi examples/hello.lipi        # Hello, LiPi!
 ```
+
+On Windows with Rust's GNU toolchain, also install a MinGW GCC (for example
+`winget install BrechtSanders.WinLibs.POSIX.UCRT`) for the SQLite driver. The
+default MSVC toolchain needs nothing extra. `scripts/package-windows.ps1`
+builds the Windows release archive.
 
 ```sh
 lipi hello.lipi            # run a file
@@ -200,8 +209,9 @@ LIPI_TEST_POSTGRES_URL=postgres://postgres@localhost:5432/postgres cargo test -p
 | 0.3 | application APIs: HTTP server, middleware, cookies, WebSockets, auth foundations (crypto), database layer on SQLite and PostgreSQL | ✅ |
 | 0.5 | formatter, linter, packages + lipi.lock + folder registries, language server, VS Code extension ✅ · hosted registry service | ✅ (registry hosting later) |
 | 0.8 | web platform: JS target (`lipi build`, web + Node, LIP6001 browser boundary), LiPi UI (pages, components, state, events), JS interop (`js`), `lipi dev` with live reload | ✅ |
-| 1.0 | stable language and ecosystem | planned |
-| 1.x | WASM, native, desktop, Android, iOS | planned |
+| 1.0 | stable language: frozen grammar + [stability promise](docs/STABILITY.md), conformance suite, faster interpreter, installers, getting-started guide | ✅ |
+| 1.x | debugger, online playground, docs site, hosted package registry | next |
+| 2.x | WASM, native, desktop, Android, iOS | planned |
 
 ### Known limitations
 

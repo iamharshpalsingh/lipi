@@ -1,20 +1,40 @@
 //! "did you mean ...?" suggestions and hints for habits carried over from other languages.
 
-/// Levenshtein edit distance, used to suggest similarly spelled names.
+/// Edit distance used to suggest similarly spelled names. Swapping two
+/// neighbouring letters counts as one edit, since it's the most common typo
+/// ("nmae" is 1 away from "name").
 pub fn edit_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut cur = vec![0; b.len() + 1];
+    let mut d = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for j in 0..=b.len() {
+        d[0][j] = j;
+    }
     for i in 1..=a.len() {
-        cur[0] = i;
         for j in 1..=b.len() {
             let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+            d[i][j] = (d[i - 1][j] + 1).min(d[i][j - 1] + 1).min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
+            }
         }
-        std::mem::swap(&mut prev, &mut cur);
     }
-    prev[b.len()]
+    d[a.len()][b.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn swapped_letters_are_one_edit() {
+        assert_eq!(edit_distance("nmae", "name"), 1);
+        assert_eq!(edit_distance("kitten", "sitting"), 3);
+        assert_eq!(closest("nmae", ["image", "name", "age"]), Some("name"));
+    }
 }
 
 /// `to_number` → `toNumber`
