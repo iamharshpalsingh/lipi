@@ -194,12 +194,21 @@ language and its roadmap: one readable language for scripts, backends, web
 apps and, next, mobile, desktop and AI. Learn it with the Hinglish course
 [LiPi Paathshala](docs/learn/README.md).
 
+## Playground
+
+Try LiPi without installing anything. `scripts\build-playground.ps1` builds
+`dist\lipi-playground.html`, one file with the compiler inside it (as
+WebAssembly). Open it in a browser, or put it on any web host. Programs run
+in a sandboxed frame; share links carry the code in the link itself.
+
 ## Repository layout
 
 ```
 compiler/   lexer, parser, AST, checker (name resolution + types), diagnostics
 runtime/    interpreter, values, tasks, stdlib, HTTP client/server, crypto
 cli/        the `lipi` command, REPL, golden + server integration tests
+web/        the compiler as WebAssembly, for the playground
+playground/ the playground page (scripts/build-playground.ps1 builds it)
 tests/      language/*.lipi with expected output (.out); server/ test app
 examples/   hello, todo CLI, shapes, word count, GitHub API, JSON API server
 docs/       language specification
@@ -223,7 +232,7 @@ LIPI_TEST_POSTGRES_URL=postgres://postgres@localhost:5432/postgres cargo test -p
 | 0.5 | formatter, linter, packages + lipi.lock + folder registries, language server, VS Code extension ✅ · hosted registry service | ✅ (registry hosting later) |
 | 0.8 | web platform: JS target (`lipi build`, web + Node, LIP6001 browser boundary), LiPi UI (pages, components, state, events), JS interop (`js`), `lipi dev` with live reload | ✅ |
 | 1.0 | stable language: frozen grammar + [stability promise](docs/STABILITY.md), conformance suite, faster interpreter, installers, getting-started guide | ✅ |
-| 1.x | debugger, online playground, docs site, hosted package registry | next |
+| 1.x | online playground ✅ · debugger, docs site, hosted package registry | in progress |
 | 2.x | WASM, native, desktop, Android, iOS | planned |
 
 ### Known limitations

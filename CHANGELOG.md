@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- The LiPi Playground: write LiPi in a browser and see it run, with nothing
+  to install. The compiler runs in the page as WebAssembly (the new `web`
+  crate) and programs run in a sandboxed frame. It has examples, error
+  messages with hints, and share links (the code goes in the link).
+  Build it with `scripts\build-playground.ps1`; the result is one file,
+  `dist\lipi-playground.html`, that can be opened directly or hosted anywhere.
+
 ## 1.1.2
 
 - Credits: LiPi was created by Harsh Pal Singh (@iamharshpalsingh). It's shown

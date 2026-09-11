@@ -96,20 +96,17 @@ pub fn build(entry: &Path, target: Target, builtins: &[&str]) -> Result<String, 
             source: String::new(),
         }
     })?;
-    let mut g = Gen {
-        target,
-        builtins: builtins.iter().map(|s| s.to_string()).collect(),
-        builtin_list: builtins.to_vec(),
-        root: resolve::find_project_root(entry),
-        files: Vec::new(),
-        sites: Vec::new(),
-        modules: Vec::new(),
-        ids: HashMap::new(),
-        loading: Vec::new(),
-        st: FileState::default(),
-    };
+    let mut g = Gen::new(target, builtins, resolve::find_project_root(entry));
     let canon = entry.canonicalize().unwrap_or_else(|_| entry.to_path_buf());
     g.compile_source(canon, shown, source).map_err(|e| *e)?;
+    Ok(g.bundle())
+}
+
+/// Compile one program given as text, with no files around it (the browser
+/// playground). `use` works for standard modules; other files aren't available.
+pub fn build_source(name: &str, source: &str, target: Target, builtins: &[&str]) -> Result<String, BuildError> {
+    let mut g = Gen::new(target, builtins, PathBuf::from("."));
+    g.compile_source(PathBuf::from(name), name.to_string(), source.to_string()).map_err(|e| *e)?;
     Ok(g.bundle())
 }
 
@@ -283,7 +280,22 @@ fn always_bool(e: &Expr) -> bool {
     }
 }
 
-impl Gen<'_> {
+impl<'a> Gen<'a> {
+    fn new(target: Target, builtins: &[&'a str], root: PathBuf) -> Self {
+        Gen {
+            target,
+            builtins: builtins.iter().map(|s| s.to_string()).collect(),
+            builtin_list: builtins.to_vec(),
+            root,
+            files: Vec::new(),
+            sites: Vec::new(),
+            modules: Vec::new(),
+            ids: HashMap::new(),
+            loading: Vec::new(),
+            st: FileState::default(),
+        }
+    }
+
     // ----- files and modules ----------------------------------------------------------
 
     fn compile_source(&mut self, canon: PathBuf, shown: String, source: String) -> Result<usize, Box<BuildError>> {

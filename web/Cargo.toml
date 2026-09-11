@@ -1,0 +1,15 @@
+[package]
+name = "lipi_web"
+description = "The LiPi compiler as WebAssembly, for the browser playground"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+lipi_compiler = { path = "../compiler" }

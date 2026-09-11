@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LiPi Playground</title>
+<meta name="description" content="Write LiPi and run it in your browser">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anek+Latin:wght@600;700;800&family=Mukta:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #F3EDE4;
+  --panel: #FBF8F3;
+  --ink: #17120E;
+  --ink-2: #5E554D;
+  --rule: #E0D6C8;
+  --accent: #D2452A;
+  --accent-ink: #FFFFFF;
+  --accent-hover: #B83A22;
+  --editor: #1B1512;
+  --editor-fg: #EDE4D8;
+  --gutter: #6E645B;
+  --ok: #2F7A4F;
+  --bad: #B3321A;
+  --t-kw: #FF8A6B;
+  --t-str: #E6C07B;
+  --t-com: #8C8178;
+  --t-num: #9CD3B0;
+  --t-ui: #A9C1FF;
+  --display: "Anek Latin", "Segoe UI", system-ui, sans-serif;
+  --body: "Mukta", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #110D0B;
+    --panel: #1A1512;
+    --ink: #EFE6DA;
+    --ink-2: #A89C90;
+    --rule: #33291F;
+    --accent: #E4583A;
+    --accent-hover: #F07152;
+    --editor: #0F0C0A;
+    --ok: #6CC393;
+    --bad: #FF8A6B;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #110D0B;
+  --panel: #1A1512;
+  --ink: #EFE6DA;
+  --ink-2: #A89C90;
+  --rule: #33291F;
+  --accent: #E4583A;
+  --accent-hover: #F07152;
+  --editor: #0F0C0A;
+  --ok: #6CC393;
+  --bad: #FF8A6B;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 16px/1.5 var(--body);
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+button, select { font: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--panel);
+}
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; margin-right: auto; }
+.brand b { font: 800 21px/1 var(--display); letter-spacing: -0.02em; }
+.brand span { font: 600 21px/1 var(--display); color: var(--ink-2); letter-spacing: -0.02em; }
+.examples { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); }
+.examples select {
+  color: var(--ink);
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 7px 10px;
+  min-width: 190px;
+}
+.btn {
+  border: 1px solid var(--rule);
+  background: var(--ground);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--ink-2); }
+.btn.run { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); padding: 8px 18px; }
+.btn.run:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+.panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px;
+  min-height: 0;
+}
+.pane {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.pane-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--rule);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.pane-head .file { font: 500 13px/1 var(--mono); color: var(--ink); }
+.status { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; color: var(--ink-2); }
+.status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-2); }
+.status.ok { color: var(--ok); }
+.status.ok::before { background: var(--ok); }
+.status.bad { color: var(--bad); }
+.status.bad::before { background: var(--bad); }
+
+.editor-pane { background: var(--editor); border-color: transparent; }
+.editor-pane .pane-head { border-bottom-color: rgba(255, 255, 255, 0.07); color: #A89C90; }
+.editor-pane .pane-head .file { color: #EDE4D8; }
+.editor { display: grid; grid-template-columns: auto 1fr; min-height: 0; overflow: hidden; }
+.gutter {
+  padding: 16px 10px 16px 14px;
+  font: 400 14px/1.65 var(--mono);
+  color: var(--gutter);
+  text-align: right;
+  white-space: pre;
+  user-select: none;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+.code-area { position: relative; min-height: 0; }
+.code-area pre, .code-area textarea {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 16px 16px 40px 6px;
+  font: 400 14px/1.65 var(--mono);
+  tab-size: 4;
+  white-space: pre;
+  overflow: auto;
+  border: 0;
+}
+.code-area pre { color: var(--editor-fg); pointer-events: none; }
+.code-area textarea {
+  background: transparent;
+  color: transparent;
+  caret-color: #FFFFFF;
+  scrollbar-color: #4A3F37 transparent;
+  resize: none;
+  outline: none;
+}
+.code-area textarea::selection { background: rgba(210, 69, 42, 0.45); color: transparent; }
+.t-kw { color: var(--t-kw); }
+.t-str { color: var(--t-str); }
+.t-com { color: var(--t-com); font-style: italic; }
+.t-num { color: var(--t-num); }
+.t-ui { color: var(--t-ui); }
+
+.result-pane { position: relative; }
+.result-pane iframe { width: 100%; height: 100%; border: 0; background: #FBF8F3; }
+.compile-error {
+  position: absolute;
+  inset: 41px 0 0 0;
+  margin: 0;
+  padding: 18px 20px;
+  overflow: auto;
+  background: var(--panel);
+  font: 400 14px/1.6 var(--mono);
+  white-space: pre-wrap;
+  color: var(--ink);
+}
+.compile-error .e { color: var(--bad); font-weight: 500; }
+.compile-error .h { color: var(--ink); background: rgba(210, 69, 42, 0.1); border-radius: 4px; }
+.compile-error .c { color: var(--bad); }
+
+.foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 20px 12px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.foot a { color: var(--ink-2); }
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--panel);
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+@media (max-width: 860px) {
+  body { grid-template-rows: auto auto auto; height: auto; }
+  .bar { flex-wrap: wrap; }
+  .panes { grid-template-columns: 1fr; }
+  .editor-pane { height: 55vh; }
+  .result-pane { height: 60vh; }
+  .examples select { min-width: 150px; }
+}
+</style>
+
+<header class="bar">
+  <a class="brand" href="https://github.com/iamharshpalsingh/lipi" target="_blank" rel="noopener">
+    <svg width="34" height="34" viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="3" y="10" width="26" height="4" rx="2" fill="currentColor"></rect>
+      <path d="M10.3 6.6C10.3 3.2 17 3.2 17 7.2V26.8" fill="none" stroke="#D2452A" stroke-width="4.5" stroke-linecap="round"></path>
+    </svg>
+    <b>LiPi</b><span>Playground</span>
+  </a>
+  <label class="examples">Example
+    <select id="examples"></select>
+  </label>
+  <button class="btn" id="share" type="button">Share link</button>
+  <button class="btn run" id="run" type="button">Run ▶</button>
+</header>
+
+<main class="panes">
+  <section class="pane editor-pane" aria-label="Code">
+    <div class="pane-head"><span class="file">main.lipi</span><span>Ctrl + Enter to run · Tab indents</span></div>
+    <div class="editor">
+      <div class="gutter" id="gutter" aria-hidden="true">1</div>
+      <div class="code-area">
+        <pre aria-hidden="true"><code id="hl"></code></pre>
+        <textarea id="src" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" aria-label="LiPi code"></textarea>
+      </div>
+    </div>
+  </section>
+  <section class="pane result-pane" aria-label="Result">
+    <div class="pane-head"><span class="status" id="status">Starting the compiler…</span><span>Result</span></div>
+    <iframe id="result" sandbox="allow-scripts" title="Program result"></iframe>
+    <pre class="compile-error" id="compile-error" hidden></pre>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>LiPi by <a href="https://github.com/iamharshpalsingh" target="_blank" rel="noopener">Harsh Pal Singh</a> · the compiler runs in your browser, nothing is uploaded</span>
+  <span id="version"></span>
+</footer>
+
+<script>const LIPI_WASM = "/*__WASM__*/"; const LIPI_VERSION = "/*__VERSION__*/";</script>
+<script>
+const EXAMPLES = [
+  { name: "Namaste LiPi", code: `# Your first LiPi program. Change anything, it runs again.
+naam = "Asha"
+show "Namaste, {naam}!"
+
+for i in 1 to 5
+    show "7 x {i} = {7 * i}"
+` },
+  { name: "Marks report", code: `students = [
+    {naam: "Asha", marks: 92},
+    {naam: "Ravi", marks: 67},
+    {naam: "Meera", marks: 85},
+    {naam: "Kabir", marks: 28},
+]
+
+grade(marks)
+    if marks >= 90
+        return "A"
+    else if marks >= 75
+        return "B"
+    else if marks >= 33
+        return "C"
+    return "F"
+
+for s in students
+    show "{s.naam}: {s.marks} marks, grade {grade(s.marks)}"
+
+average = students.map(s => s.marks).sum() / students.length
+show "Class average:", average.round(1)
+show "Toppers:", students.filter(s => s.marks >= 80).map(s => s.naam)
+` },
+  { name: "Counter app", code: `state count = 0
+
+page "/"
+    heading "Counter", level: 1
+    text "Button {count} baar dabaya"
+    row
+        button "+1"
+            count += 1
+        button "Reset", disabled: count == 0
+            count = 0
+` },
+  { name: "To-do app", code: `state todos = ["LiPi seekhna", "Project banana"]
+state draft = ""
+
+component TodoItem(title, index)
+    card
+        row style: "justify-content: space-between;"
+            text title, style: "margin: 0;"
+            button "Done"
+                todos.removeAt(index)
+
+page "/"
+    heading "Mera To-Do", level: 1
+    row
+        field draft, placeholder: "Kya karna hai?" with value
+            draft = value
+        button "Add", disabled: draft == ""
+            todos.push(draft)
+            draft = ""
+    if todos.isEmpty()
+        text "Sab kaam ho gaye!"
+    for i, t in todos
+        TodoItem(t, i)
+` },
+  { name: "Responsive navbar", code: `# Make the result narrow (or open it on a phone) to see the menu button.
+state menuOpen = false
+
+const barStyle = "background: #17120E; padding: 10px 16px; border-radius: 16px; justify-content: space-between; flex-wrap: nowrap;"
+const linkStyle = "color: #DDDDDD; text-decoration: none; padding: 6px 14px; border-radius: 999px;"
+const activeStyle = "color: #17120E; background: white; text-decoration: none; padding: 6px 14px; border-radius: 999px; font-weight: 600;"
+
+component NavLink(label, path, current)
+    link label, to: path, style: activeStyle if current == path else linkStyle, hover: "" if current == path else "background: #333333;"
+
+component Navbar(current)
+    row style: barStyle
+        link "MySite", to: "/", style: "color: white; font-weight: 800; text-decoration: none;"
+        row mobile: "display: none;"
+            NavLink("Home", "/", current)
+            NavLink("About", "/about", current)
+        button "✕" if menuOpen else "☰", desktop: "display: none;"
+            menuOpen = not menuOpen
+    if menuOpen
+        column desktop: "display: none;"
+            button "Home"
+                menuOpen = false
+                navigate("/")
+            button "About"
+                menuOpen = false
+                navigate("/about")
+
+page "/" with url
+    Navbar(url.path)
+    heading "Home", level: 1
+    text "Ye navbar sirf LiPi se bana hai."
+
+page "/about" with url
+    Navbar(url.path)
+    heading "About", level: 1
+` },
+  { name: "Errors that teach", code: `# LiPi explains its errors. Fix the typo below and watch it run.
+naam = "Asha"
+show "Namaste, {nmae}!"
+` },
+];
+
+const KW = new Set("if else for in while repeat break continue return and or not true false null const use from as export function async await try catch finally throw match show type test component state with to step".split(" "));
+const UI = new Set("page card row column section heading text button link image field checkbox element navigate".split(" "));
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function highlight(src) {
+  const re = /(#.*$)|("(?:\\.|[^"\\])*"?|'[^'\n]*'?)|(\b\d[\d_]*(?:\.\d+)?\b)|([A-Za-z_]\w*)/gm;
+  let out = "", last = 0, m;
+  while ((m = re.exec(src))) {
+    out += esc(src.slice(last, m.index));
+    const [t, com, str, num, word] = m;
+    if (com) out += `<span class="t-com">${esc(t)}</span>`;
+    else if (str) out += `<span class="t-str">${esc(t)}</span>`;
+    else if (num) out += `<span class="t-num">${esc(t)}</span>`;
+    else if (KW.has(word)) out += `<span class="t-kw">${esc(t)}</span>`;
+    else if (UI.has(word)) out += `<span class="t-ui">${esc(t)}</span>`;
+    else out += esc(t);
+    last = re.lastIndex;
+  }
+  return out + esc(src.slice(last)) + "\n";
+}
+
+const $ = (id) => document.getElementById(id);
+const src = $("src"), hl = $("hl"), gutter = $("gutter"), statusEl = $("status"), frame = $("result"), errorBox = $("compile-error");
+$("version").textContent = "LiPi " + LIPI_VERSION;
+
+function paint() {
+  hl.innerHTML = highlight(src.value);
+  const lines = src.value.split("\n").length;
+  gutter.textContent = Array.from({ length: lines }, (_, i) => i + 1).join("\n");
+}
+src.addEventListener("scroll", () => {
+  hl.parentElement.scrollTop = src.scrollTop;
+  hl.parentElement.scrollLeft = src.scrollLeft;
+  gutter.scrollTop = src.scrollTop;
+});
+
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = "status" + (kind ? " " + kind : "");
+}
+
+let wasm = null;
+function compile(code) {
+  const input = new TextEncoder().encode(code);
+  const ptr = wasm.alloc(input.length);
+  new Uint8Array(wasm.memory.buffer, ptr, input.length).set(input);
+  const res = wasm.compile(ptr, input.length);
+  wasm.free(ptr, input.length);
+  const len = new DataView(wasm.memory.buffer).getUint32(res, true);
+  const kind = new Uint8Array(wasm.memory.buffer)[res + 4];
+  const text = new TextDecoder().decode(new Uint8Array(wasm.memory.buffer, res + 5, len).slice());
+  wasm.free(res, len + 5);
+  return { ok: kind === 0, text };
+}
+
+const PAGE_CSS = 'body{margin:0;padding:22px 24px;font:16px/1.55 Mukta,"Segoe UI",system-ui,sans-serif;color:#17120E;background:#FBF8F3}#lipi-output{font:14.5px/1.65 "JetBrains Mono",Consolas,monospace;white-space:pre-wrap;margin:0}#app:not(:empty)+#lipi-output{margin-top:18px;padding-top:14px;border-top:1px solid #E3DACD}.lipi-error{font:14px/1.55 "JetBrains Mono",Consolas,monospace;white-space:pre-wrap;color:#8A1C0C;background:#FDECE8;border-radius:10px;padding:14px 16px;margin:12px 0}';
+function pageFor(js) {
+  const safe = js.replace(/<\//g, "<\\/");
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mukta:wght@400;600;700&family=JetBrains+Mono&display=swap">' +
+    "<style>" + PAGE_CSS + '</style></head><body><div id="app"></div><pre id="lipi-output" hidden></pre><script>' + safe + "<\/script></body></html>";
+}
+
+function showError(text) {
+  errorBox.innerHTML = text.split("\n").map((line) => {
+    const e = esc(line);
+    if (/^ERROR/.test(line)) return `<span class="e">${e}</span>`;
+    if (/^Hint:/.test(line)) return `<span class="h">${e}</span>`;
+    if (/^\s*\^+\s*$/.test(line)) return `<span class="c">${e}</span>`;
+    return e;
+  }).join("\n");
+  errorBox.hidden = false;
+}
+
+function run() {
+  if (!wasm) return;
+  const started = performance.now();
+  let result;
+  try {
+    result = compile(src.value);
+  } catch (e) {
+    setStatus("The compiler stopped", "bad");
+    showError("The LiPi compiler hit an internal problem: " + e.message);
+    return;
+  }
+  const ms = Math.max(1, Math.round(performance.now() - started));
+  if (!result.ok) {
+    const code = (result.text.match(/LIP\d{4}/) || ["Error"])[0];
+    setStatus(code + " · fix it in the code", "bad");
+    showError(result.text);
+    return;
+  }
+  errorBox.hidden = true;
+  frame.srcdoc = pageFor(result.text);
+  setStatus("Running · compiled in " + ms + " ms", "ok");
+}
+
+let timer = null;
+src.addEventListener("input", () => {
+  paint();
+  clearTimeout(timer);
+  timer = setTimeout(run, 600);
+});
+src.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); run(); return; }
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const { selectionStart: s, selectionEnd: t, value: v } = src;
+    src.value = v.slice(0, s) + "    " + v.slice(t);
+    src.selectionStart = src.selectionEnd = s + 4;
+    src.dispatchEvent(new Event("input"));
+  } else if (e.key === "Enter") {
+    const { selectionStart: s, value: v } = src;
+    const lineStart = v.lastIndexOf("\n", s - 1) + 1;
+    const indent = v.slice(lineStart, s).match(/^ */)[0];
+    if (indent) {
+      e.preventDefault();
+      src.value = v.slice(0, s) + "\n" + indent + v.slice(src.selectionEnd);
+      src.selectionStart = src.selectionEnd = s + 1 + indent.length;
+      src.dispatchEvent(new Event("input"));
+    }
+  }
+});
+
+const picker = $("examples");
+EXAMPLES.forEach((ex, i) => picker.add(new Option(ex.name, String(i))));
+picker.addEventListener("change", () => {
+  src.value = EXAMPLES[Number(picker.value)].code;
+  paint();
+  run();
+  src.focus();
+});
+$("run").addEventListener("click", run);
+
+function toBase64(text) {
+  let bin = "";
+  for (const b of new TextEncoder().encode(text)) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function fromBase64(b64) {
+  const bin = atob(b64.replace(/-/g, "+").replace(/_/g, "/"));
+  return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+}
+function toast(text) {
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.textContent = text;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2200);
+}
+$("share").addEventListener("click", () => {
+  const url = location.href.split("#")[0] + "#code=" + toBase64(src.value);
+  history.replaceState(null, "", url);
+  if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast("Link copied"), () => toast("Copy the link from the address bar"));
+  else toast("Copy the link from the address bar");
+});
+
+const shared = location.hash.startsWith("#code=") ? (() => { try { return fromBase64(location.hash.slice(6)); } catch (e) { return null; } })() : null;
+src.value = shared ?? EXAMPLES[0].code;
+paint();
+
+try {
+  const bytes = Uint8Array.from(atob(LIPI_WASM), (c) => c.charCodeAt(0));
+  WebAssembly.instantiate(bytes, {}).then(({ instance }) => {
+    wasm = instance.exports;
+    run();
+  }, (e) => {
+    setStatus("This browser couldn't start the compiler", "bad");
+    showError("The LiPi compiler (WebAssembly) couldn't start here: " + e.message + "\nOpen the playground in a current version of Chrome, Edge, Firefox or Safari.");
+  });
+} catch (e) {
+  setStatus("This browser couldn't start the compiler", "bad");
+  showError(String(e));
+}
+</script>

@@ -24,3 +24,8 @@ jobs:
         run: cargo test --workspace --no-fail-fast
       - name: Examples are formatted
         run: cargo run -q -p lipi -- format --check examples
+      - name: Playground compiler builds as WebAssembly
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build -p lipi_web --target wasm32-unknown-unknown --release
