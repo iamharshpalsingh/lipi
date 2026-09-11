@@ -224,7 +224,7 @@ impl Interpreter {
 
     fn read_source(path: &Path, file: &Rc<str>) -> Result<String, RunError> {
         std::fs::read_to_string(path).map_err(|e| {
-            let hint = if e.kind() == std::io::ErrorKind::NotFound { "Check the file name and the folder you're in.".to_string() } else { e.to_string() };
+            let hint = if e.kind() == std::io::ErrorKind::NotFound { resolve::missing_file_hint(path) } else { e.to_string() };
             RunError::Syntax(
                 Diagnostic { severity: Severity::Error, code: Some("LIP3001"), message: format!("couldn't read {file}"), span: None, hint: Some(hint) },
                 file.clone(),

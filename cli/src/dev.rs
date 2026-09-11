@@ -62,6 +62,18 @@ pub fn run(args: &[String]) -> i32 {
         Ok(v) => v,
         Err(code) => return code,
     };
+    // Report a missing file right away rather than serving a page that only shows the error.
+    if !file.is_file() {
+        let d = lipi_compiler::Diagnostic {
+            severity: lipi_compiler::Severity::Error,
+            code: Some("LIP3001"),
+            message: format!("couldn't read {}", file.display()),
+            span: None,
+            hint: Some(lipi_compiler::resolve::missing_file_hint(&file)),
+        };
+        eprint!("{}", d.render("", &file.to_string_lossy(), crate::color()));
+        return 1;
+    }
     let root = lipi_compiler::resolve::find_project_root(&file);
     let title = file.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "LiPi app".into());
     let shared = Arc::new(Shared { build: Mutex::new(Build::default()), changed: Condvar::new(), html: crate::web_page(&title, true), public: root.join("public") });

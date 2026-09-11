@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.3
+
+- `lipi dev` with a file that doesn't exist reports it right away. Before,
+  it started a server that couldn't notice when the file was created.
+- The project folder is found correctly even when the file doesn't exist yet.
+- "couldn't read main.lipi" now points to src\main.lipi when that's where the
+  file is, and suggests `lipi run`.
+- The VS Code extension includes its MIT license (the Marketplace requires it).
+
 ## 1.0.2
 
 - The Windows installer registers `.lipi` files for the current user: they

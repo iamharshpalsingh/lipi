@@ -89,7 +89,7 @@ type R<T> = Result<T, Fail>;
 pub fn build(entry: &Path, target: Target, builtins: &[&str]) -> Result<String, BuildError> {
     let shown = entry.to_string_lossy().to_string();
     let source = std::fs::read_to_string(entry).map_err(|e| {
-        let hint = if e.kind() == std::io::ErrorKind::NotFound { "Check the file name and the folder you're in.".to_string() } else { e.to_string() };
+        let hint = if e.kind() == std::io::ErrorKind::NotFound { resolve::missing_file_hint(entry) } else { e.to_string() };
         BuildError {
             diags: vec![Diagnostic { severity: Severity::Error, code: Some("LIP3001"), message: format!("couldn't read {shown}"), span: None, hint: Some(hint) }],
             file: shown.clone(),

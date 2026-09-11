@@ -74,9 +74,28 @@ pub fn package_entry(modules: &Path, name: &str) -> Option<PathBuf> {
     [dir.join("main.lipi"), dir.join("src").join("main.lipi"), modules.join(format!("{name}.lipi"))].into_iter().find(|p| p.is_file())
 }
 
+/// A hint for a program file that doesn't exist. A common slip is running
+/// `lipi main.lipi` in a new project, where the file is in src/.
+pub fn missing_file_hint(path: &Path) -> String {
+    if let Some(name) = path.file_name() {
+        let in_src = Path::new("src").join(name);
+        if !path.starts_with("src") && in_src.is_file() {
+            return format!(
+                "There's a {} in the src folder. Run it with `lipi {}`, or run the whole project with `lipi run`.",
+                name.to_string_lossy(),
+                in_src.display()
+            );
+        }
+    }
+    "Check the file name and the folder you're in.".to_string()
+}
+
 /// The folder containing `lipi.json`, searching upward from the main file.
 pub fn find_project_root(main: &Path) -> PathBuf {
-    let start = main.canonicalize().unwrap_or_else(|_| main.to_path_buf());
+    // The file may not exist yet (canonicalize fails); still start from an absolute path.
+    let start = main
+        .canonicalize()
+        .unwrap_or_else(|_| std::env::current_dir().map(|d| d.join(main)).unwrap_or_else(|_| main.to_path_buf()));
     let mut dir = start.parent();
     while let Some(d) = dir {
         if d.join("lipi.json").is_file() {
