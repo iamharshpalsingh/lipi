@@ -50,4 +50,4 @@ main program done
 tick 1
 tick 2
 tick 3
-after 40 ms: 3 ticks
+10 ms after the last tick: 3 ticks

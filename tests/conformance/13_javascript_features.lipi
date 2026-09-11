@@ -133,8 +133,8 @@ tick()
     show "tick {ticks}"
     if ticks == 3
         clock.stop()
+        time.after 10
+            show "10 ms after the last tick: {ticks} ticks"
 
 clock = time.every(5, tick)
-time.after 40
-    show "after 40 ms: {ticks} ticks"
 show "main program done"

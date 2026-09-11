@@ -1184,7 +1184,14 @@ function random() {
   return rng / 2 ** 32;
 }
 
-function sleepTask(ms) { return track(new Promise((resolve) => setTimeout(() => resolve(null), Math.max(0, ms)))); }
+/// sleep(ms) waits at least ms milliseconds, like `lipi run` (a JavaScript timer can fire a moment early).
+function sleepTask(ms) {
+  const end = Date.now() + Math.max(0, ms);
+  return track(new Promise((resolve) => {
+    const wait = () => { const left = end - Date.now(); if (left <= 0) resolve(null); else setTimeout(wait, left); };
+    setTimeout(wait, Math.max(0, ms));
+  }));
+}
 
 function randomBytes(n) { const b = new Uint8Array(n); crypto.getRandomValues(b); return b; }
 const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");

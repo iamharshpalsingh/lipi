@@ -68,6 +68,12 @@ mod tests {
 
     #[test]
     fn compiles_programs_and_reports_errors() {
+        // Test threads get a small stack on Linux and macOS; unoptimised
+        // compiler code needs more (the browser build is optimised).
+        std::thread::Builder::new().stack_size(16 * 1024 * 1024).spawn(check_programs).unwrap().join().unwrap();
+    }
+
+    fn check_programs() {
         let js = compile_text("show \"Namaste\"\n").unwrap();
         assert!(js.contains("$start(0)") && js.contains("Namaste"));
         let err = compile_text("naam = \"Asha\"\nshow nmae\n").unwrap_err();
