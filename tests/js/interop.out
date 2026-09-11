@@ -1,0 +1,10 @@
+9 2 JsObject 3.14
+1970-01-01T00:00:00.000Z <js Date>
+LiPi ["a", "b"] 1.5 null ["a", "b"]
+{name: "LiPi", tags: ["a", "b"], size: 1.5}
+5
+{"user":{"name":"Dezy","tags":[1,2.5]}}
+guide.txt .png
+LIP5012 true
+LIP2008 "nothing" isn't a function on this JavaScript object
+changed function object

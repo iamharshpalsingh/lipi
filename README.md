@@ -54,6 +54,7 @@ lipi format                # rewrite all .lipi files in the canonical style (--c
 lipi lint                  # errors + warnings: unused names, shadowing, dead code
 lipi install ../utils      # add a dependency: a folder, git:URL#tag, or name@^1.2 from a registry
 lipi build                 # compile to JavaScript: dist/index.html + app.js (--target node for Node.js)
+lipi dev                   # serve the web app; every save rebuilds and reloads the page
 lipi doctor                # check your setup
 ```
 
@@ -95,7 +96,10 @@ page "/"
 `lipi build` turns this into `dist/index.html` + `app.js`. Clicking the button
 changes `cart` and the page redraws. See
 [`examples/web_shop.lipi`](examples/web_shop.lipi) and
-[SPEC §15.3](docs/SPEC.md#153-web-ui-lipi-ui).
+[SPEC §15.3](docs/SPEC.md#153-web-ui-lipi-ui). During development, `lipi dev`
+serves the app and reloads it on every save. Existing JavaScript libraries and
+browser APIs are reachable through the `js` module
+([SPEC §15.4](docs/SPEC.md#154-javascript-interop)).
 
 Every diagnostic has a stable code (see [SPEC §16](docs/SPEC.md#16-diagnostics)),
 the exact location and a hint. LiPi also recognises habits from other
@@ -192,7 +196,7 @@ LIPI_TEST_POSTGRES_URL=postgres://postgres@localhost:5432/postgres cargo test -p
 | 0.2 | usability, type system, modules, errors, JSON, files, HTTP client, async, tests, REPL | ✅ |
 | 0.3 | application APIs: HTTP server, middleware, cookies, WebSockets, auth foundations (crypto), database layer on SQLite and PostgreSQL | ✅ |
 | 0.5 | formatter, linter, packages + lipi.lock + folder registries, language server, VS Code extension ✅ · hosted registry service | ✅ (registry hosting later) |
-| 0.8 | web platform: JS target (`lipi build`, web + Node, LIP6001 browser boundary) ✅ · LiPi UI (pages, components, state, events) ✅ · JS interop, `lipi dev` | in progress |
+| 0.8 | web platform: JS target (`lipi build`, web + Node, LIP6001 browser boundary), LiPi UI (pages, components, state, events), JS interop (`js`), `lipi dev` with live reload | ✅ |
 | 1.0 | stable language and ecosystem | planned |
 | 1.x | WASM, native, desktop, Android, iOS | planned |
 

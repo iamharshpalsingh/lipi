@@ -974,6 +974,9 @@ impl Interpreter {
             Value::Nil if optional => Ok(Value::Nil),
             Value::Nil => Err(self.err("LIP5003", format!("cannot read \".{key}\" of null"), name.span, Self::null_hint(obj_expr, &format!(".{key}")))),
             Value::Object(o) => {
+                if o.module.as_deref() == Some("js") {
+                    return Err(self.js_only(key, name.span));
+                }
                 if let Some(v) = o.fields.borrow().get(key) {
                     return Ok(v.clone());
                 }
@@ -1015,6 +1018,16 @@ impl Interpreter {
                 }
             }
         }
+    }
+
+    /// The `js` module needs a JavaScript engine, so it only works in `lipi build` output.
+    fn js_only(&self, key: &str, span: Span) -> Flow {
+        self.err(
+            "LIP3007",
+            format!("\"js.{key}\" only works in JavaScript builds"),
+            span,
+            Some("Build the program with `lipi build` (or `lipi build --target node`) and run the output.".into()),
+        )
     }
 
     fn missing_field(&self, o: &ObjectData, name: &Name) -> Flow {
@@ -1152,6 +1165,9 @@ impl Interpreter {
         let key = name.text.as_str();
         match &obj {
             Value::Object(o) => {
+                if o.module.as_deref() == Some("js") {
+                    return Err(self.js_only(key, name.span));
+                }
                 let field = o.fields.borrow().get(key).cloned();
                 if let Some(f) = field {
                     return self.call_value(f, pos, named, span, None);

@@ -1,0 +1,32 @@
+# JavaScript interop. Build with: lipi build tests/js/interop.lipi --target node
+jsMath = js.global.Math
+show jsMath.max(3, 9, 4), jsMath.floor(2.7), typeOf(jsMath), jsMath.PI.round(2)
+
+date = js.new(js.global.Date, 0)
+show date.toISOString(), date
+
+data = js.global.JSON.parse('{"name": "LiPi", "tags": ["a", "b"], "size": 1.5}')
+show data.name, data.tags, data.size, data.missing, data["tags"]
+show js.value(data)
+
+add(a, b)
+    return a + b
+
+show js.global.Reflect.apply(add, null, [2, 3])
+show js.global.JSON.stringify({user: {name: "Dezy", tags: [1, 2.5]}})
+
+path = await js.import("node:path")
+show path.basename("/docs/guide.txt"), path.extname("photo.png")
+
+try
+    js.global.JSON.parse('{broken')
+catch err
+    show err.code, err.message.startsWith("JavaScript error")
+
+try
+    jsMath.nothing()
+catch err
+    show err.code, err.message
+
+data.name = "changed"
+show data.name, js.typeOf(add), js.typeOf(data)

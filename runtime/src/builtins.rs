@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-pub const MODULES: &[&str] = &["math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database"];
+pub const MODULES: &[&str] = &["math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database", "js"];
 
 // ----- argument helpers (shared with other modules) ------------------------------
 
@@ -293,6 +293,8 @@ pub fn install(g: &Rc<Env>) {
     def("server", module("server", crate::server::entries()));
     def("crypto", module("crypto", crate::crypto::entries()));
     def("database", crate::db::module());
+    // JavaScript interop only exists in `lipi build` output; see Interpreter::js_only.
+    def("js", module("js", Vec::new()));
     // Routes can also be declared without the `server.` prefix: get "/users" ...
     for (name, route) in crate::server::route_globals() {
         def(name, route);

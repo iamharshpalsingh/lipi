@@ -1,5 +1,6 @@
 //! `lipi` — the command-line front door to the Lipi language.
 
+mod dev;
 mod lsp;
 mod pkg;
 mod repl;
@@ -22,6 +23,7 @@ Usage:
   lipi format [paths] [--check]  Rewrite files in the canonical LiPi style (--check: only report)
   lipi lint [paths] [--strict]   Errors plus warnings (unused names, shadowing, dead code)
   lipi build [file] [--target web|node] [--out dist]  Compile to JavaScript for the browser or Node.js
+  lipi dev [file] [--port 3000]  Serve the web app and rebuild + reload it on every save
   lipi install [spec...]    Install dependencies (e.g. ../utils, git:URL#v1, slugify@^1.2)
   lipi remove <name...>     Remove dependencies
   lipi update [name...]     Upgrade dependencies within their version ranges
@@ -32,7 +34,7 @@ Usage:
   lipi doctor               Check your setup
   lipi --version            Show the version
 
-Coming later: dev, deploy
+Coming later: deploy
 ";
 
 fn main() {
@@ -100,9 +102,9 @@ fn run(args: Vec<String>) -> i32 {
             0
         }
         Some("build") => cmd_build(&rest()),
-        Some(cmd @ ("dev" | "deploy")) => {
-            let when = if cmd == "dev" { "the next LiPi 0.8 step, together with LiPi UI" } else { "a later release" };
-            eprintln!("`lipi {cmd}` isn't available yet. It's planned for {when}.");
+        Some("dev") => dev::run(&rest()),
+        Some("deploy") => {
+            eprintln!("`lipi deploy` isn't available yet. It's planned for a later release.");
             2
         }
         Some(file) if file.ends_with(".lipi") || Path::new(file).is_file() => run_program(Path::new(file), &rest()),
@@ -477,8 +479,19 @@ fn cmd_build(args: &[String]) -> i32 {
         }
         Target::Web => {
             let title = file.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "LiPi app".into());
-            if !write("app.js", &js) || !write("index.html", &web_page(&title)) {
+            if !write("app.js", &js) || !write("index.html", &web_page(&title, false)) {
                 return 1;
+            }
+            // Images, styles and JavaScript files the app uses go in public/.
+            let public = lipi_compiler::resolve::find_project_root(&file).join("public");
+            if public.is_dir() {
+                match copy_dir(&public, &out_dir) {
+                    Ok(n) => println!("Copied {n} file{} from {}", if n == 1 { "" } else { "s" }, public.display()),
+                    Err(e) => {
+                        eprintln!("lipi: couldn't copy {}: {e}", public.display());
+                        return 1;
+                    }
+                }
             }
             println!("Built {} and {} from {}", out_dir.join("index.html").display(), out_dir.join("app.js").display(), file.display());
             println!("Open index.html in a browser, or serve the folder with any static file server.");
@@ -487,8 +500,49 @@ fn cmd_build(args: &[String]) -> i32 {
     0
 }
 
+/// Copy a folder's contents into another folder. Returns how many files were copied.
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<usize> {
+    let mut count = 0;
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            count += copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// The script `lipi dev` adds to the page: reload after each rebuild, show build errors.
+const DEV_SCRIPT: &str = r#"<script>
+(() => {
+  let version;
+  const events = new EventSource("/__lipi/events");
+  events.addEventListener("version", (e) => {
+    if (version !== undefined && e.data !== version) location.reload();
+    version = e.data;
+  });
+  events.addEventListener("build-error", (e) => {
+    let box = document.getElementById("lipi-dev-error");
+    if (!box) {
+      box = document.createElement("pre");
+      box.id = "lipi-dev-error";
+      box.className = "lipi-error";
+      document.body.prepend(box);
+    }
+    box.textContent = "The build failed. Fix this and save:\n\n" + e.data;
+  });
+})();
+</script>
+"#;
+
 /// The page that loads a web build.
-fn web_page(title: &str) -> String {
+fn web_page(title: &str, dev: bool) -> String {
+    let reload = if dev { DEV_SCRIPT } else { "" };
     const LOGO: &str = include_str!("../../assets/lipi-mark.svg");
     let mut icon = String::from("data:image/svg+xml,");
     for c in LOGO.trim().chars() {
@@ -524,7 +578,7 @@ fn web_page(title: &str) -> String {
 <div id="app"></div>
 <pre id="lipi-output" hidden></pre>
 <script src="app.js"></script>
-</body>
+{reload}</body>
 </html>
 "#
     )

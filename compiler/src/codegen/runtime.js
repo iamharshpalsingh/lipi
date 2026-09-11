@@ -8,6 +8,8 @@
 class Dec { constructor(v) { this.v = v; } }
 class LObj { constructor(f, t, m) { this.f = f || new Map(); this.t = t || null; this.m = m || null; } }
 class LType { constructor(name, fields, methods) { this.name = name; this.fields = fields; this.methods = methods; } }
+/// A JavaScript object reached through the `js` module.
+class JsRef { constructor(v) { this.v = v; } }
 class LipiError extends Error {
   constructor(value, diag, trace) { super(diag.message); this.lipi = value; this.diag = diag; this.trace = trace; }
 }
@@ -72,6 +74,7 @@ function typeName(v) {
   if (v instanceof LType) return "Type";
   if (typeof v === "function") return "Function";
   if (v instanceof Promise) return "Task";
+  if (v instanceof JsRef) return "JsObject";
   return "Object";
 }
 
@@ -198,6 +201,7 @@ function expectBool(v, s, what) {
 
 // ----- equality and printing ---------------------------------------------------------
 function eq(a, b) {
+  if (a instanceof JsRef) return b instanceof JsRef && a.v === b.v;
   if (a === null || a === undefined) return b === null || b === undefined;
   if (typeof a === "boolean" || typeof a === "string") return a === b;
   if (isNum(a)) return isNum(b) && (isInt(a) && isInt(b) ? a == b : nv(a) === nv(b));
@@ -248,6 +252,7 @@ function repr(v, depth = 0) {
     return `<function ${v.$native || v.name || ""}>`;
   }
   if (v instanceof Promise) return v.$done ? "<task done>" : "<task running>";
+  if (v instanceof JsRef) return jsDescribe(v.v);
   return String(v);
 }
 
@@ -398,6 +403,7 @@ function matches(v, t) {
     case "Object": return v instanceof LObj;
     case "Function": return typeof v === "function" || v instanceof LType;
     case "Task": return v instanceof Promise;
+    case "JsObject": return v instanceof JsRef;
     default: return v instanceof LObj && v.t !== null && v.t.name === t;
   }
 }
@@ -582,6 +588,7 @@ function $get(obj, name, s, optional) {
     }
     missingField(obj, name, s);
   }
+  if (obj instanceof JsRef) return jsGet(obj, name, s);
   if (obj instanceof LType) $fail("LIP5004", `"${obj.name}" is a type; create one first to use ".${name}"`, s, `For example: item = ${obj.name}(...) and then item.${name}`);
   const p = property(obj, name);
   if (p) return p.v;
@@ -611,6 +618,7 @@ function $set(obj, name, v, s) {
     $rt.changed();
     return;
   }
+  if (obj instanceof JsRef) return jsSet(obj, name, v, s);
   if (obj === null || obj === undefined) $fail("LIP5003", `cannot set ".${name}" on null`, s, nullHint(siteOf(s), `.${name}`));
   $fail("LIP5008", `cannot set a field on ${withArticle(typeName(obj))}`, s);
 }
@@ -626,6 +634,7 @@ function position(index, len, s) {
 }
 
 function $idx(obj, index, s) {
+  if (obj instanceof JsRef) return jsGet(obj, index, s);
   if (Array.isArray(obj)) return obj[position(index, obj.length, s)];
   if (typeof obj === "string") { const chars = Array.from(obj); return chars[position(index, chars.length, s)]; }
   if (obj instanceof LObj) {
@@ -637,6 +646,7 @@ function $idx(obj, index, s) {
 }
 
 function $seti(obj, index, v, s) {
+  if (obj instanceof JsRef) return jsSet(obj, index, v, s);
   if (Array.isArray(obj)) {
     if (index === obj.length) $fail("LIP5001", `index ${obj.length} is just past the end of the array`, s, "To add an item to the end, use .push(item).");
     obj[position(index, obj.length, s)] = v;
@@ -890,7 +900,7 @@ function $mc(obj, name, pos, named, s, optional) {
   else if (Array.isArray(obj)) r = listMethod(obj, name, pos, named, s);
   else if (isNum(obj)) r = numberMethod(obj, name, pos, named, s);
   else if (obj instanceof Promise) r = taskMethod(obj, name);
-  else if (typeof obj === "object" && $rt.jsObject) return $rt.jsObject(obj, name, pos, s);
+  else if (obj instanceof JsRef) return jsCall(obj, name, pos, named, s);
   if (r !== undefined) return r;
   const m = membersFor(obj);
   if (m) unknownMember(m[0], name, nameSite, m[1]);
@@ -1201,6 +1211,146 @@ function installNode() {
     }),
   });
 }
+
+// ----- JavaScript interop -------------------------------------------------------------------
+// The `js` module is the explicit boundary to JavaScript: js.global, js.import,
+// js.new and js.value. Values crossing it are converted both ways:
+//   JS number   -> Integer when it's a whole number that fits exactly, else Decimal
+//   JS array    -> a new LiPi Array (a copy)
+//   JS function -> a LiPi function (a LiPi function passed to JS becomes a JS function)
+//   JS promise  -> a Task (use await)
+//   other JS objects -> JsObject, whose fields and methods work with . and ( )
+//   null/undefined -> null
+// Errors thrown by JavaScript become LiPi errors with code LIP5012.
+
+function jsDescribe(v) {
+  if (typeof v === "function") return `<js function ${v.name || ""}>`.replace(" >", ">");
+  const name = v && v.constructor && v.constructor.name;
+  return `<js ${name || "object"}>`;
+}
+
+function jsError(e, s) {
+  if (e instanceof LipiError || e instanceof ExitSignal) throw e;
+  $fail("LIP5012", `JavaScript error: ${e && e.message ? e.message : String(e)}`, s, "The error came from JavaScript code called through `js`.");
+}
+
+function toJs(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "bigint") return Number(v);
+  if (v instanceof Dec) return v.v;
+  if (v instanceof JsRef) return v.v;
+  if (Array.isArray(v)) return v.map(toJs);
+  if (v instanceof Promise) return v.then(toJs);
+  if (v instanceof LObj) {
+    const o = {};
+    for (const [k, x] of v.f) if (typeof x !== "function") o[k] = toJs(x);
+    return o;
+  }
+  if (typeof v === "function") {
+    if (v.$js) return v.$js;
+    return function (...args) {
+      const r = cb(v, args.map((x) => fromJs(x)), null);
+      $rt.changed();
+      return toJs(r);
+    };
+  }
+  return v;
+}
+
+function fromJs(v, self) {
+  if (v === null || v === undefined) return null;
+  switch (typeof v) {
+    case "number": return Number.isSafeInteger(v) ? v + 0 : new Dec(v);
+    case "bigint": return v < MIN64 || v > MAX64 ? new Dec(Number(v)) : v >= -9007199254740991n && v <= 9007199254740991n ? Number(v) : v;
+    case "string": case "boolean": return v;
+    case "function": {
+      if (v.$m || v.$native) return v;
+      const f = nat(v.name || "function", (pos, named, s) => {
+        let r;
+        try { r = v.apply(self, jsArgs(pos, named)); } catch (e) { jsError(e, s); }
+        return fromJs(r);
+      });
+      f.$js = v;
+      return f;
+    }
+    case "object":
+      if (Array.isArray(v)) return v.map((x) => fromJs(x));
+      if (typeof v.then === "function") return track(Promise.resolve(v).then((x) => fromJs(x), (e) => jsError(e, null)));
+      return new JsRef(v);
+  }
+  return new JsRef(v);
+}
+
+function jsArgs(pos, named) {
+  const out = pos.map(toJs);
+  if (named) out.push(Object.fromEntries(Object.entries(named).map(([k, x]) => [k, toJs(x)])));
+  return out;
+}
+
+function jsKey(key, s) {
+  if (typeof key === "string") return key;
+  if (isInt(key)) return Number(key);
+  $fail("LIP2001", `JavaScript properties are Strings or Integers, not ${withArticle(typeName(key))}`, s);
+}
+
+function jsGet(ref, key, s) {
+  let v;
+  try { v = ref.v[jsKey(key, s)]; } catch (e) { jsError(e, s); }
+  return fromJs(v, ref.v);
+}
+
+function jsSet(ref, key, v, s) {
+  try { ref.v[jsKey(key, s)] = toJs(v); } catch (e) { jsError(e, s); }
+  $rt.changed();
+}
+
+function jsCall(ref, name, pos, named, s) {
+  let f;
+  try { f = ref.v[name]; } catch (e) { jsError(e, s); }
+  if (typeof f !== "function") {
+    $fail("LIP2008", `"${name}" isn't a function on this JavaScript object`, s,
+      f === undefined ? "It doesn't exist. Check the spelling: JavaScript names are case-sensitive." : "It's a value; read it without ( ).");
+  }
+  let r;
+  try { r = f.apply(ref.v, jsArgs(pos, named)); } catch (e) { jsError(e, s); }
+  return fromJs(r);
+}
+
+/// js.value(x): plain JavaScript data (objects and arrays, deeply) as LiPi values.
+function jsValue(v, depth = 0) {
+  if (v instanceof JsRef) v = v.v;
+  if (v === null || v === undefined || depth > 100) return null;
+  if (Array.isArray(v)) return v.map((x) => jsValue(x, depth + 1));
+  if (typeof v === "object" && typeof v.then !== "function") {
+    const m = new Map();
+    for (const k of Object.keys(v)) m.set(k, jsValue(v[k], depth + 1));
+    return new LObj(m);
+  }
+  return fromJs(v);
+}
+
+function installJs() {
+  $g.js = module("js", {
+    global: new JsRef(globalThis),
+    import: nat("import", (a, n, s) => {
+      const spec = argStr("import", a, n, 0, "module", s);
+      return track(import(spec).then((m) => new JsRef(m), (e) => jsError(e, s)));
+    }),
+    new: nat("new", (a, n, s) => {
+      const C = toJs(need("new", a, n, 0, "constructor", s));
+      if (typeof C !== "function") $fail("LIP5008", "js.new() needs a JavaScript class or constructor", s, "For example: js.new(js.global.Date)");
+      let r;
+      try { r = Reflect.construct(C, jsArgs(a.slice(1), n)); } catch (e) { jsError(e, s); }
+      return fromJs(r);
+    }),
+    value: nat("value", (a, n, s) => jsValue(need("value", a, n, 0, "value", s))),
+    typeOf: nat("typeOf", (a, n, s) => {
+      const v = toJs(need("typeOf", a, n, 0, "value", s));
+      return v === null ? "null" : Array.isArray(v) ? "array" : typeof v;
+    }),
+  });
+}
+installJs();
 
 // ----- modules and program start --------------------------------------------------------
 function $use(id) {

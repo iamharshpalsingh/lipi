@@ -534,6 +534,35 @@ page "/orders/:id" with route       # route.params.id, route.query
 - `lipi run` on a UI program stops at the first element with LIP6002 and
   explains how to build it. Node builds refuse UI elements (LIP3006).
 
+### 15.4 JavaScript interop
+
+The `js` module is the explicit boundary to JavaScript, in web and Node builds
+(`lipi run` stops with LIP3007):
+
+```lipi
+chart = await js.import("https://cdn.jsdelivr.net/npm/canvas-confetti@1/+esm")
+chart.default(particleCount: 120)          # named arguments become one options object
+
+title = js.global.document.title           # browser APIs through js.global
+now = js.new(js.global.Date)
+data = js.value(js.global.JSON.parse(text)) # plain JS data as LiPi values
+```
+
+| JavaScript | LiPi |
+|---|---|
+| whole number that fits exactly / other number | Integer / Decimal |
+| string, boolean, null/undefined | String, Boolean, null |
+| array | a new Array (a copy) |
+| function | function (and a LiPi function passed to JavaScript becomes a JS function) |
+| promise | Task (`await` it) |
+| any other object | `JsObject`: `.field`, `obj["key"]`, `.method(...)` and assignment reach the JS object; a missing field is null |
+
+LiPi values passed to JavaScript become numbers, strings, arrays and plain
+objects. A JavaScript exception becomes a LiPi error with code LIP5012, which
+`try`/`catch` can handle. `js.import` takes a URL, a file served next to
+`index.html` (put it in the project's `public/` folder), or, in Node builds, a
+package name. `js.typeOf(x)` gives JavaScript's `typeof`.
+
 ## 16. Diagnostics
 
 Every diagnostic has a stable code, a plain-language message, the exact
@@ -556,9 +585,9 @@ Hint: did you mean "user"?
 | LIP0xxx | Syntax | 0001 unexpected token · 0002 indentation · 0003 string · 0004 invalid character · 0005 missing block · 0006 invalid assignment target · 0007 number literal · 0008 habit from another language |
 | LIP1xxx | Name | 1001 duplicate definition · 1002 undefined variable · 1003 constant reassigned · 1004 unknown member · 1005 reserved word · 1006 misplaced return/break/continue · 1007 unknown parameter |
 | LIP2xxx | Type | 2001 operator type mismatch · 2002 declared type mismatch · 2003 argument count · 2004 argument type · 2005 condition not Boolean · 2006 unknown type · 2007 return type · 2008 not callable |
-| LIP3xxx | Module | 3001 module not found · 3002 circular use · 3003 not exported · 3004 ambiguous module · 3005 invalid export · 3006 not available in JavaScript builds yet |
+| LIP3xxx | Module | 3001 module not found · 3002 circular use · 3003 not exported · 3004 ambiguous module · 3005 invalid export · 3006 not available in JavaScript builds yet · 3007 only available in JavaScript builds |
 | LIP4xxx | Async | 4001 await outside async context · 4002 timed out · 4003 cancelled · 4004 background task failed |
-| LIP5xxx | Runtime | 5000 general · 5001 index out of range · 5002 division by zero · 5003 null access · 5004 missing field · 5005 recursion limit · 5006 thrown by the program · 5007 file/IO · 5008 invalid argument · 5009 Integer overflow · 5010 assertion failed · 5011 database |
+| LIP5xxx | Runtime | 5000 general · 5001 index out of range · 5002 division by zero · 5003 null access · 5004 missing field · 5005 recursion limit · 5006 thrown by the program · 5007 file/IO · 5008 invalid argument · 5009 Integer overflow · 5010 assertion failed · 5011 database · 5012 JavaScript error |
 | LIP6xxx | Security and platform | 6001 server-only code in a browser build · 6002 UI outside a browser page · 6003 unsafe link, address or element |
 | LIP7xxx | Package | reserved |
 
@@ -573,7 +602,14 @@ manager errors use LIP7xxx: 7001 checksum mismatch · 7002 package not found ·
 `lipi <file>`, `lipi run [file]`, `lipi check [file] [--json]`,
 `lipi test [path]`, `lipi new <name>` (creates `lipi.json`, `src/main.lipi`,
 `tests/`), `lipi repl` (or plain `lipi`), `lipi doctor`, `lipi --version`.
-`dev deploy setup` are reserved and report which release adds them.
+`deploy setup` are reserved and report which release adds them.
+
+**Development server:** `lipi dev [file] [--port 3000]` builds the web app,
+serves it on `http://localhost:3000/`, and watches the project's `.lipi` files
+and `public/` folder. Every save rebuilds the app and reloads the page. A
+build error is printed in the terminal and shown on the page until it's fixed.
+Files in `public/` are served as they are, and `lipi build` copies them into
+the output folder.
 
 **JavaScript builds:** `lipi build [file] [--target web|node] [--out dist]`
 compiles a program and every file it uses into one JavaScript bundle.
@@ -714,5 +750,5 @@ primary     = INTEGER | DECIMAL | STRING | "true" | "false" | "null" | IDENT
 
 ## 20. Not yet implemented
 
-The hosted LiPi Registry service, JavaScript interop, `lipi dev`, forms and validation helpers, keyed component identity,
+The hosted LiPi Registry service, forms and validation helpers, keyed component identity, source maps and minified production builds,
 the debugger, regex and encoding modules, permission-aware I/O, and generics/traits.

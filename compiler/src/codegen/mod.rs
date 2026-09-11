@@ -42,7 +42,7 @@ impl Target {
 }
 
 /// Every standard module the interpreter has.
-const STD_MODULES: &[&str] = &["math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database"];
+const STD_MODULES: &[&str] = &["math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database", "js"];
 /// Global functions the JavaScript runtime provides.
 const JS_GLOBALS: &[&str] = &["toNumber", "toInteger", "toDecimal", "toString", "typeOf", "assert", "assertEqual", "sleep", "all", "timeout"];
 /// LiPi UI: pages and elements (web builds only).
@@ -52,8 +52,8 @@ pub const UI_ELEMENTS: &[&str] = &[
 
 fn js_module_available(name: &str, target: Target) -> bool {
     match target {
-        Target::Web => matches!(name, "math" | "json" | "http" | "time" | "crypto"),
-        Target::Node => matches!(name, "math" | "json" | "http" | "time" | "crypto" | "fs" | "env" | "process"),
+        Target::Web => matches!(name, "math" | "json" | "http" | "time" | "crypto" | "js"),
+        Target::Node => matches!(name, "math" | "json" | "http" | "time" | "crypto" | "js" | "fs" | "env" | "process"),
     }
 }
 
