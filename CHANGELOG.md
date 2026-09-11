@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.1
+
+- "did you mean" suggestions: when two names are equally close, the one that
+  starts with the same letter wins, then the one closest in length (`nmae`
+  now suggests `naam`, not `image`).
+- The LiPi Paathshala course (`docs/learn`, in Hinglish): 13 chapters with
+  exercises, every example checked by the test suite.
+
 ## 1.1.0
 
 - LiPi UI: every element takes `hover:`, `focus:`, `mobile:` (screens up to
