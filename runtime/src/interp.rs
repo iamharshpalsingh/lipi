@@ -6,6 +6,7 @@ use crate::task;
 use crate::value::*;
 use lipi_compiler::ast::*;
 use lipi_compiler::checker::{self, binary_error, condition_error, module_binding_name, operand_hint, unknown_member, unknown_name, with_article};
+use lipi_compiler::resolve::{self, find_project_root, Resolved};
 use lipi_compiler::suggest;
 use lipi_compiler::{Diagnostic, Severity, Span};
 use std::cell::RefCell;
@@ -1399,47 +1400,13 @@ impl Interpreter {
     ///   `lipi_modules/`, then as a standard module. A name that matches both a
     ///   project file and a package is an error.
     fn use_module(&mut self, source: &str, span: Span) -> Result<Value, Flow> {
-        let is_path = source.starts_with('.') || source.starts_with('/') || source.ends_with(".lipi") || source.contains(['/', '\\']);
-        let base = Path::new(&*self.file).parent().map(Path::to_path_buf).unwrap_or_default();
-        if is_path {
-            let mut path = base.join(source);
-            if path.extension().is_none_or(|e| e != "lipi") {
-                path = PathBuf::from(format!("{}.lipi", path.to_string_lossy()));
-            }
-            if !path.is_file() {
-                return Err(self.err(
-                    "LIP3001",
-                    format!("module not found: \"{}\"", path.to_string_lossy()),
-                    span,
-                    Some(format!("Paths in `use` are relative to the file that uses them ({}).", self.file)),
-                ));
-            }
-            return self.load_module(&path, span);
-        }
-        let rel = format!("{}.lipi", source.replace('.', "/"));
-        let local = [base.join(&rel), self.project_root.join("src").join(&rel)].into_iter().find(|p| p.is_file());
-        let package = package_entry(&self.project_root.join("lipi_modules"), source);
-        match (local, package) {
-            (Some(l), Some(p)) => Err(self.err(
-                "LIP3004",
-                format!("\"{source}\" matches both a project file and a package"),
-                span,
-                Some(format!("Found {} and {}. Rename your file, or use it by path: use \"./{rel}\"", l.display(), p.display())),
-            )),
-            (Some(path), None) | (None, Some(path)) => self.load_module(&path, span),
-            (None, None) => {
-                if builtins::MODULES.contains(&source) {
-                    if let Some(v) = self.globals.get(source) {
-                        return Ok(v);
-                    }
-                }
-                Err(self.err(
-                    "LIP3001",
-                    format!("module not found: \"{source}\""),
-                    span,
-                    Some(format!("Looked for {rel} next to this file and in src/, and for a package in lipi_modules/. Packages install with `lipi install` (coming in LiPi 0.5).")),
-                ))
-            }
+        match resolve::resolve_use(source, &self.file, &self.project_root, builtins::MODULES) {
+            Ok(Resolved::File(path)) => self.load_module(&path, span),
+            Ok(Resolved::Std(name)) => match self.globals.get(&name) {
+                Some(v) => Ok(v),
+                None => Err(self.err("LIP3001", format!("module not found: \"{source}\""), span, None)),
+            },
+            Err(e) => Err(self.err(e.code, e.message, span, Some(e.hint))),
         }
     }
 
@@ -1517,32 +1484,3 @@ fn compare(op: BinOp, ord: Option<std::cmp::Ordering>) -> bool {
     }
 }
 
-/// The entry file of an installed package: `main` from its lipi.json, else
-/// main.lipi or src/main.lipi (or a single-file package `lipi_modules/<name>.lipi`).
-fn package_entry(modules: &Path, name: &str) -> Option<PathBuf> {
-    let dir = modules.join(name);
-    if let Ok(text) = std::fs::read_to_string(dir.join("lipi.json")) {
-        if let Ok(serde_json::Value::Object(m)) = serde_json::from_str::<serde_json::Value>(&text) {
-            if let Some(serde_json::Value::String(main)) = m.get("main") {
-                let file = dir.join(main);
-                if file.is_file() {
-                    return Some(file);
-                }
-            }
-        }
-    }
-    [dir.join("main.lipi"), dir.join("src").join("main.lipi"), modules.join(format!("{name}.lipi"))].into_iter().find(|p| p.is_file())
-}
-
-/// The folder containing `lipi.json`, searching upward from the main file.
-fn find_project_root(main: &Path) -> PathBuf {
-    let start = main.canonicalize().unwrap_or_else(|_| main.to_path_buf());
-    let mut dir = start.parent();
-    while let Some(d) = dir {
-        if d.join("lipi.json").is_file() {
-            return d.to_path_buf();
-        }
-        dir = d.parent();
-    }
-    start.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
-}

@@ -53,6 +53,7 @@ lipi check src/main.lipi   # find mistakes without running (--json for editors/C
 lipi format                # rewrite all .lipi files in the canonical style (--check for CI)
 lipi lint                  # errors + warnings: unused names, shadowing, dead code
 lipi install ../utils      # add a dependency: a folder, git:URL#tag, or name@^1.2 from a registry
+lipi build                 # compile to JavaScript: dist/index.html + app.js (--target node for Node.js)
 lipi doctor                # check your setup
 ```
 
@@ -167,17 +168,18 @@ LIPI_TEST_POSTGRES_URL=postgres://postgres@localhost:5432/postgres cargo test -p
 | 0.2 | usability, type system, modules, errors, JSON, files, HTTP client, async, tests, REPL | ✅ |
 | 0.3 | application APIs: HTTP server, middleware, cookies, WebSockets, auth foundations (crypto), database layer on SQLite and PostgreSQL | ✅ |
 | 0.5 | formatter, linter, packages + lipi.lock + folder registries, language server, VS Code extension ✅ · hosted registry service | ✅ (registry hosting later) |
-| 0.8 | web platform: LiPi UI, JS target, JS interop | planned |
+| 0.8 | web platform: JS target (`lipi build`, web + Node, LIP6001 browser boundary) ✅ · LiPi UI, JS interop, `lipi dev` | in progress |
 | 1.0 | stable language and ecosystem | planned |
 | 1.x | WASM, native, desktop, Android, iOS | planned |
 
 ### Known limitations
 
-- It's a tree-walking interpreter: fine for tools, APIs and learning, but not
-  yet fast. An IR/bytecode VM is planned before the JS/WASM/native backends.
+- `lipi run` is a tree-walking interpreter: fine for tools, APIs and learning,
+  but not yet fast. `lipi build --target node` output is already about 3× faster;
+  an IR/bytecode VM is planned before the WASM/native backends.
+- JavaScript builds don't include `database` and `server` yet (they're server-side).
 - The HTTP client uses the system `curl` for its transport (`lipi doctor`
   checks for it).
 - Calling an `async` function runs it right away. Background I/O overlaps,
   but there's no cooperative scheduler yet.
 - There's no permission model yet for `fs`, `process.run` or the network.
-- The formatter, `lipi build` and the package manager are not implemented yet.

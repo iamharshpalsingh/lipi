@@ -487,10 +487,10 @@ Hint: did you mean "user"?
 | LIP0xxx | Syntax | 0001 unexpected token · 0002 indentation · 0003 string · 0004 invalid character · 0005 missing block · 0006 invalid assignment target · 0007 number literal · 0008 habit from another language |
 | LIP1xxx | Name | 1001 duplicate definition · 1002 undefined variable · 1003 constant reassigned · 1004 unknown member · 1005 reserved word · 1006 misplaced return/break/continue · 1007 unknown parameter |
 | LIP2xxx | Type | 2001 operator type mismatch · 2002 declared type mismatch · 2003 argument count · 2004 argument type · 2005 condition not Boolean · 2006 unknown type · 2007 return type · 2008 not callable |
-| LIP3xxx | Module | 3001 module not found · 3002 circular use · 3003 not exported · 3004 ambiguous module · 3005 invalid export |
+| LIP3xxx | Module | 3001 module not found · 3002 circular use · 3003 not exported · 3004 ambiguous module · 3005 invalid export · 3006 not available in JavaScript builds yet |
 | LIP4xxx | Async | 4001 await outside async context · 4002 timed out · 4003 cancelled · 4004 background task failed |
 | LIP5xxx | Runtime | 5000 general · 5001 index out of range · 5002 division by zero · 5003 null access · 5004 missing field · 5005 recursion limit · 5006 thrown by the program · 5007 file/IO · 5008 invalid argument · 5009 Integer overflow · 5010 assertion failed · 5011 database |
-| LIP6xxx | Security | reserved |
+| LIP6xxx | Security | 6001 server-only code in a browser build |
 | LIP7xxx | Package | reserved |
 
 Lint warnings (from `lipi lint`) use LIP9xxx: 9001 unused variable ·
@@ -504,7 +504,29 @@ manager errors use LIP7xxx: 7001 checksum mismatch · 7002 package not found ·
 `lipi <file>`, `lipi run [file]`, `lipi check [file] [--json]`,
 `lipi test [path]`, `lipi new <name>` (creates `lipi.json`, `src/main.lipi`,
 `tests/`), `lipi repl` (or plain `lipi`), `lipi doctor`, `lipi --version`.
-`build dev deploy setup` are reserved and report which release adds them.
+`dev deploy setup` are reserved and report which release adds them.
+
+**JavaScript builds:** `lipi build [file] [--target web|node] [--out dist]`
+compiles a program and every file it uses into one JavaScript bundle.
+
+- `--target web` (the default) writes `dist/index.html` and `dist/app.js`.
+  `show` prints to the page and the browser console; an uncaught error is
+  shown on the page in the usual format.
+- `--target node` writes `dist/app.cjs`, which runs with `node dist/app.cjs`
+  and also has `fs`, `env` and `process`.
+- The output keeps LiPi's semantics: Integers are exact over the full 64-bit
+  range, with the same overflow error. `/` gives a Decimal, conditions must be
+  Booleans, and `==` compares contents. Errors have the same codes, messages,
+  hints, source excerpts and call traces as `lipi run`. The test suite runs
+  every golden program both ways and requires identical output.
+- **Security boundary:** browser builds refuse server-only modules and
+  functions (`fs`, `env`, `process`, `database`, `server`, routes, `input`,
+  and password hashing) with LIP6001. File access, secrets and database
+  credentials therefore can't end up in code sent to the browser. Node builds
+  report features that aren't supported yet (`database`, `server`) with LIP3006.
+- Known differences: an `await` inside a callback makes that callback return a
+  task (so `items.map(x => await f(x))` gives tasks, like `all` expects).
+  After an `await`, stack traces only show the calls made since it resumed.
 
 **Formatter:** `lipi format [paths] [--check]` rewrites files in the one
 canonical style: 4-space indentation, single spaces around operators, one
@@ -623,6 +645,5 @@ primary     = INTEGER | DECIMAL | STRING | "true" | "false" | "null" | IDENT
 
 ## 20. Not yet implemented
 
-The hosted LiPi Registry service, `lipi build`
-with the JavaScript target, the debugger, regex and encoding modules, UI components and `state`, client/server secret boundaries,
-permission-aware I/O, and generics/traits.
+The hosted LiPi Registry service, UI components and `state`, JavaScript interop, `lipi dev`,
+the debugger, regex and encoding modules, permission-aware I/O, and generics/traits.

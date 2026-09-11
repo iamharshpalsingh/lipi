@@ -21,6 +21,7 @@ Usage:
   lipi test [path]          Run test blocks in *_test.lipi files
   lipi format [paths] [--check]  Rewrite files in the canonical LiPi style (--check: only report)
   lipi lint [paths] [--strict]   Errors plus warnings (unused names, shadowing, dead code)
+  lipi build [file] [--target web|node] [--out dist]  Compile to JavaScript for the browser or Node.js
   lipi install [spec...]    Install dependencies (e.g. ../utils, git:URL#v1, slugify@^1.2)
   lipi remove <name...>     Remove dependencies
   lipi update [name...]     Upgrade dependencies within their version ranges
@@ -31,7 +32,7 @@ Usage:
   lipi doctor               Check your setup
   lipi --version            Show the version
 
-Coming later: build, dev, deploy
+Coming later: dev, deploy
 ";
 
 fn main() {
@@ -98,12 +99,9 @@ fn run(args: Vec<String>) -> i32 {
             print!("{HELP}");
             0
         }
-        Some(cmd @ ("build" | "dev" | "deploy")) => {
-            let when = match cmd {
-                "build" | "dev" => "Lipi 0.8, together with the JavaScript target",
-                "deploy" => "a later release",
-                _ => "Lipi 0.5, together with the package manager and tooling",
-            };
+        Some("build") => cmd_build(&rest()),
+        Some(cmd @ ("dev" | "deploy")) => {
+            let when = if cmd == "dev" { "the next LiPi 0.8 step, together with LiPi UI" } else { "a later release" };
             eprintln!("`lipi {cmd}` isn't available yet. It's planned for {when}.");
             2
         }
@@ -398,6 +396,137 @@ fn cmd_test(args: &[String]) -> i32 {
         println!("{green}{passed} passed{reset}, {red}{failed} failed{reset}");
         1
     }
+}
+
+fn cmd_build(args: &[String]) -> i32 {
+    use lipi_compiler::codegen::{self, Target};
+    let mut target = Target::Web;
+    let mut out_dir = PathBuf::from("dist");
+    let mut files = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        let (flag, inline) = match a.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f, Some(v.to_string())),
+            _ => (a, None),
+        };
+        match flag {
+            "--target" | "-t" | "--out" | "-o" => {
+                let value = match inline {
+                    Some(v) => Some(v),
+                    None => {
+                        i += 1;
+                        args.get(i).cloned()
+                    }
+                };
+                let Some(value) = value else {
+                    eprintln!("lipi: {flag} needs a value");
+                    return 2;
+                };
+                if matches!(flag, "--out" | "-o") {
+                    out_dir = PathBuf::from(value);
+                } else {
+                    target = match value.as_str() {
+                        "web" | "browser" => Target::Web,
+                        "node" => Target::Node,
+                        other => {
+                            eprintln!("lipi: unknown target `{other}`. Use --target web or --target node.");
+                            return 2;
+                        }
+                    };
+                }
+            }
+            _ => files.push(a.to_string()),
+        }
+        i += 1;
+    }
+    let (file, _) = match file_or_entry(&files) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    let names = Interpreter::new().builtin_names();
+    let builtins: Vec<&str> = names.iter().map(String::as_str).collect();
+    let js = match codegen::build(&file, target, &builtins) {
+        Ok(js) => js,
+        Err(e) => {
+            eprint!("{}", e.render(color()));
+            return 1;
+        }
+    };
+    if let Err(e) = std::fs::create_dir_all(&out_dir) {
+        eprintln!("lipi: couldn't create {}: {e}", out_dir.display());
+        return 1;
+    }
+    let write = |name: &str, content: &str| -> bool {
+        let path = out_dir.join(name);
+        match std::fs::write(&path, content) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("lipi: couldn't write {}: {e}", path.display());
+                false
+            }
+        }
+    };
+    match target {
+        Target::Node => {
+            if !write("app.cjs", &js) {
+                return 1;
+            }
+            println!("Built {} from {}", out_dir.join("app.cjs").display(), file.display());
+            println!("Run it with: node {}", out_dir.join("app.cjs").display());
+        }
+        Target::Web => {
+            let title = file.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "LiPi app".into());
+            if !write("app.js", &js) || !write("index.html", &web_page(&title)) {
+                return 1;
+            }
+            println!("Built {} and {} from {}", out_dir.join("index.html").display(), out_dir.join("app.js").display(), file.display());
+            println!("Open index.html in a browser, or serve the folder with any static file server.");
+        }
+    }
+    0
+}
+
+/// The page that loads a web build.
+fn web_page(title: &str) -> String {
+    const LOGO: &str = include_str!("../../assets/lipi-mark.svg");
+    let mut icon = String::from("data:image/svg+xml,");
+    for c in LOGO.trim().chars() {
+        match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | ' ' | '-' | '.' | '/' | ':' | '=' | '\'' | ',' | '(' | ')' => icon.push(c),
+            '"' => icon.push('\''),
+            '\r' | '\n' | '\t' => icon.push(' '),
+            c => {
+                let mut buf = [0u8; 4];
+                for b in c.encode_utf8(&mut buf).bytes() {
+                    icon.push_str(&format!("%{b:02X}"));
+                }
+            }
+        }
+    }
+    let title = title.replace('&', "&amp;").replace('<', "&lt;");
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<link rel="icon" href="{icon}">
+<style>
+  body {{ font-family: system-ui, sans-serif; margin: 2rem; color: #17120E; background: #FBF8F3; }}
+  #lipi-output {{ font: 15px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; }}
+  .lipi-error {{ font: 14px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; color: #8A1C0C;
+    background: #FDECE8; border-left: 4px solid #D2452A; padding: 1rem; }}
+</style>
+</head>
+<body>
+<pre id="lipi-output" hidden></pre>
+<script src="app.js"></script>
+</body>
+</html>
+"#
+    )
 }
 
 fn cmd_new(args: &[String]) -> i32 {

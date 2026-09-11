@@ -5,11 +5,13 @@
 
 pub mod ast;
 pub mod checker;
+pub mod codegen;
 pub mod diagnostics;
 pub mod format;
 pub mod lexer;
 pub mod lint;
 pub mod parser;
+pub mod resolve;
 pub mod suggest;
 
 pub use diagnostics::{Diagnostic, Severity, Span};

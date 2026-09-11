@@ -50,6 +50,64 @@ fn language_programs_match_expected_output() {
     assert!(failures.is_empty(), "{} golden test(s) failed:\n\n{}", failures.len(), failures.join("\n"));
 }
 
+/// The same golden programs, compiled with `lipi build --target node` and run
+/// with Node.js, must print exactly what `lipi run` prints.
+#[test]
+fn javascript_builds_match_expected_output() {
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("node isn't installed; skipping the JavaScript golden tests");
+        return;
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let dir = root.join("tests").join("language");
+    let out_root = std::env::temp_dir().join(format!("lipi-js-golden-{}", std::process::id()));
+    let mut entries: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).collect();
+    entries.sort();
+    let mut failures = Vec::new();
+    for path in entries {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        // The database module is server-only; it isn't part of JavaScript builds.
+        if !name.ends_with(".lipi") || name.ends_with("_test.lipi") || name.starts_with('_') || name == "database.lipi" {
+            continue;
+        }
+        let rel = format!("tests/language/{name}");
+        let out_dir = out_root.join(name.trim_end_matches(".lipi"));
+        let (built, code) = run_lipi(root, &["build", &rel, "--target", "node", "--out", &out_dir.to_string_lossy()]);
+        let actual = if code != 0 {
+            built
+        } else {
+            let out = Command::new("node").arg(out_dir.join("app.cjs")).current_dir(root).output().expect("failed to run node");
+            let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+            text.push_str(&String::from_utf8_lossy(&out.stderr));
+            text.replace("\r\n", "\n").replace('\\', "/")
+        };
+        let expected = std::fs::read_to_string(path.with_extension("out")).unwrap_or_default().replace("\r\n", "\n");
+        if expected != actual {
+            failures.push(format!("--- {rel}\n### expected:\n{expected}\n### actual (JavaScript):\n{actual}"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&out_root);
+    assert!(failures.is_empty(), "{} JavaScript golden test(s) failed:\n\n{}", failures.len(), failures.join("\n"));
+}
+
+#[test]
+fn web_builds_refuse_server_only_modules() {
+    let tmp = std::env::temp_dir().join(format!("lipi-web-build-test-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(tmp.join("app.lipi"), "secret = env.get(\"API_KEY\")\nshow secret\n").unwrap();
+    let (out, code) = run_lipi(&tmp, &["build", "app.lipi"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("LIP6001"), "{out}");
+    assert!(out.contains("\"env\" only works on the server"), "{out}");
+    std::fs::write(tmp.join("app.lipi"), "show \"Hello from the browser\"\n").unwrap();
+    let (out, code) = run_lipi(&tmp, &["build", "app.lipi", "--out", "site"]);
+    assert_eq!(code, 0, "{out}");
+    let html = std::fs::read_to_string(tmp.join("site").join("index.html")).unwrap();
+    assert!(html.contains("<script src=\"app.js\"></script>"), "{html}");
+    assert!(tmp.join("site").join("app.js").is_file());
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 #[test]
 fn lipi_test_command_runs_test_blocks() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
