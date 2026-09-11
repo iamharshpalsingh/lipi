@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+- The Windows installer registers `.lipi` files for the current user: they
+  show the LiPi logo in File Explorer and open for editing (in VS Code if it's
+  installed, otherwise Notepad). `install.ps1 -Uninstall` removes this again.
+
 ## 1.0.1
 
 - LiPi UI: components accept `key:` (`Row(item, key: item.id)`), so their
