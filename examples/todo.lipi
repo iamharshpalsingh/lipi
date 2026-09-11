@@ -16,16 +16,16 @@ load() -> Array
         return []
     return json.parse(fs.read(file)).map(item => Todo(item.title, item.done))
 
-save(todos: Array)
-    fs.write(file, json.stringify(todos, pretty: true))
+save(items: Array)
+    fs.write(file, json.stringify(items, pretty: true))
 
-showList(todos)
-    if todos.isEmpty()
+showList(items)
+    if items.isEmpty()
         show "Nothing to do. Add something with: add \"Buy milk\""
         return
-    for i, todo in todos
-        mark = "x" if todo.done else " "
-        show "{i + 1}. [{mark}] {todo.title}"
+    for i, item in items
+        mark = "x" if item.done else " "
+        show "{i + 1}. [{mark}] {item.title}"
 
 todos = load()
 args = process.args

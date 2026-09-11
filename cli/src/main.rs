@@ -1,5 +1,6 @@
 //! `lipi` — the command-line front door to the Lipi language.
 
+mod pkg;
 mod repl;
 
 use lipi_compiler::suggest;
@@ -17,12 +18,18 @@ Usage:
   lipi run [file] [args]    Run a program (default: the project's main file)
   lipi check [file] [--json]  Find mistakes without running (--json for editors and CI)
   lipi test [path]          Run test blocks in *_test.lipi files
+  lipi format [paths] [--check]  Rewrite files in the canonical LiPi style (--check: only report)
+  lipi lint [paths] [--strict]   Errors plus warnings (unused names, shadowing, dead code)
+  lipi install [spec...]    Install dependencies (e.g. ../utils, git:URL#v1, slugify@^1.2)
+  lipi remove <name...>     Remove dependencies
+  lipi update [name...]     Upgrade dependencies within their version ranges
+  lipi publish [--registry URL]  Publish this package to a registry
   lipi new <name>           Create a new project
   lipi repl                 Start the interactive prompt (also: just `lipi`)
   lipi doctor               Check your setup
   lipi --version            Show the version
 
-Coming later: build, dev, format, lint, install, remove, update, publish, deploy
+Coming later: build, dev, deploy
 ";
 
 fn main() {
@@ -58,6 +65,23 @@ fn run(args: Vec<String>) -> i32 {
         Some("run") => cmd_run(&rest()),
         Some("check") => cmd_check(&rest()),
         Some("test") => cmd_test(&rest()),
+        Some("format" | "fmt") => cmd_format(&rest()),
+        Some("lint") => cmd_lint(&rest()),
+        Some(cmd @ ("install" | "i" | "remove" | "update" | "publish")) => {
+            let result = match cmd {
+                "install" | "i" => pkg::install(&rest()),
+                "remove" => pkg::remove(&rest()),
+                "update" => pkg::update(&rest()),
+                _ => pkg::publish(&rest()),
+            };
+            match result {
+                Ok(()) => 0,
+                Err(e) => {
+                    e.print();
+                    1
+                }
+            }
+        }
         Some("new") => cmd_new(&rest()),
         Some("repl") => repl::start(),
         Some("doctor") => cmd_doctor(),
@@ -71,7 +95,7 @@ fn run(args: Vec<String>) -> i32 {
             print!("{HELP}");
             0
         }
-        Some(cmd @ ("build" | "dev" | "format" | "fmt" | "lint" | "install" | "remove" | "update" | "publish" | "deploy")) => {
+        Some(cmd @ ("build" | "dev" | "deploy")) => {
             let when = match cmd {
                 "build" | "dev" => "Lipi 0.8, together with the JavaScript target",
                 "deploy" => "a later release",
@@ -183,6 +207,118 @@ fn cmd_check(args: &[String]) -> i32 {
             eprint!("{}", it.render(&e, color()));
             1
         }
+    }
+}
+
+/// All `.lipi` files under `dir`, skipping dependencies, build output and hidden folders.
+fn find_lipi_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+    entries.sort();
+    for p in entries {
+        let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if p.is_dir() {
+            if !name.starts_with('.') && !matches!(name.as_str(), "lipi_modules" | "target" | "node_modules") {
+                find_lipi_files(&p, out);
+            }
+        } else if name.ends_with(".lipi") {
+            out.push(p);
+        }
+    }
+}
+
+fn cmd_format(args: &[String]) -> i32 {
+    let check = args.iter().any(|a| a == "--check");
+    let targets: Vec<PathBuf> = args.iter().filter(|a| !a.starts_with("--")).map(PathBuf::from).collect();
+    let targets = if targets.is_empty() { vec![PathBuf::from(".")] } else { targets };
+    let mut files = Vec::new();
+    for t in &targets {
+        if t.is_file() {
+            files.push(t.clone());
+        } else if t.is_dir() {
+            find_lipi_files(t, &mut files);
+        } else {
+            eprintln!("lipi: there's no file or folder at {}", t.display());
+            return 2;
+        }
+    }
+    let (mut changed, mut failed) = (0, 0);
+    for file in &files {
+        let Ok(src) = std::fs::read_to_string(file) else {
+            eprintln!("lipi: couldn't read {}", file.display());
+            failed += 1;
+            continue;
+        };
+        match lipi_compiler::format::format_source(&src) {
+            Ok(out) if out != src.replace("\r\n", "\n") || src.contains("\r\n") => {
+                changed += 1;
+                if check {
+                    println!("would reformat {}", file.display());
+                } else if let Err(e) = std::fs::write(file, out) {
+                    eprintln!("lipi: couldn't write {}: {e}", file.display());
+                    failed += 1;
+                } else {
+                    println!("formatted {}", file.display());
+                }
+            }
+            Ok(_) => {}
+            Err(d) => {
+                failed += 1;
+                eprint!("{}", d.render(&src, &file.to_string_lossy(), color()));
+            }
+        }
+    }
+    let verb = if check { "need formatting" } else { "reformatted" };
+    println!("{} file{} checked, {changed} {verb}{}", files.len(), if files.len() == 1 { "" } else { "s" }, if failed > 0 { format!(", {failed} with errors") } else { String::new() });
+    if failed > 0 || (check && changed > 0) {
+        1
+    } else {
+        0
+    }
+}
+
+fn cmd_lint(args: &[String]) -> i32 {
+    let strict = args.iter().any(|a| a == "--strict");
+    let targets: Vec<PathBuf> = args.iter().filter(|a| !a.starts_with("--")).map(PathBuf::from).collect();
+    let targets = if targets.is_empty() { vec![PathBuf::from(".")] } else { targets };
+    let mut files = Vec::new();
+    for t in &targets {
+        if t.is_file() {
+            files.push(t.clone());
+        } else {
+            find_lipi_files(t, &mut files);
+        }
+    }
+    let names = Interpreter::new().builtin_names();
+    let builtins: Vec<&str> = names.iter().map(String::as_str).collect();
+    let (mut errors, mut warnings) = (0, 0);
+    for file in &files {
+        let Ok(src) = std::fs::read_to_string(file) else { continue };
+        let shown = file.to_string_lossy();
+        let program = match lipi_compiler::parse_source(&src) {
+            Ok(p) => p,
+            Err(d) => {
+                errors += 1;
+                eprint!("{}", d.render(&src, &shown, color()));
+                continue;
+            }
+        };
+        let mut diags = lipi_compiler::checker::check(&program, &builtins);
+        diags.extend(lipi_compiler::lint::lint(&program));
+        for d in diags {
+            if d.severity == lipi_compiler::Severity::Error {
+                errors += 1;
+            } else {
+                warnings += 1;
+            }
+            eprint!("{}\n", d.render(&src, &shown, color()));
+        }
+    }
+    println!("{} file{} linted: {errors} error{}, {warnings} warning{}", files.len(), if files.len() == 1 { "" } else { "s" }, if errors == 1 { "" } else { "s" }, if warnings == 1 { "" } else { "s" });
+    if errors > 0 || (strict && warnings > 0) {
+        1
+    } else {
+        0
     }
 }
 
@@ -305,7 +441,7 @@ test \"greets by name\"
         (dir.join("lipi.json"), &manifest),
         (dir.join("src").join("main.lipi"), main),
         (dir.join("tests").join("main_test.lipi"), test),
-        (dir.join(".gitignore"), "lipi_modules/\n.env\n*.db\n"),
+        (dir.join(".gitignore"), "lipi_modules/\n.lipi-tmp/\n.env\n*.db\n"),
     ];
     for (path, content) in files {
         if let Some(parent) = path.parent() {

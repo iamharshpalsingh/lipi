@@ -6,7 +6,9 @@
 pub mod ast;
 pub mod checker;
 pub mod diagnostics;
+pub mod format;
 pub mod lexer;
+pub mod lint;
 pub mod parser;
 pub mod suggest;
 

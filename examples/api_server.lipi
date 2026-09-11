@@ -9,8 +9,8 @@
 
 server.start 3000
 
-users = {}      # email -> {email, passwordHash}
-sessions = {}   # token -> email
+users = {}  # email -> {email, passwordHash}
+sessions = {}  # token -> email
 notes = []
 
 currentUser(request)

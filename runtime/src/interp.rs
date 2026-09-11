@@ -1418,8 +1418,7 @@ impl Interpreter {
         }
         let rel = format!("{}.lipi", source.replace('.', "/"));
         let local = [base.join(&rel), self.project_root.join("src").join(&rel)].into_iter().find(|p| p.is_file());
-        let root = self.project_root.join("lipi_modules");
-        let package = [root.join(source).join("main.lipi"), root.join(format!("{source}.lipi"))].into_iter().find(|p| p.is_file());
+        let package = package_entry(&self.project_root.join("lipi_modules"), source);
         match (local, package) {
             (Some(l), Some(p)) => Err(self.err(
                 "LIP3004",
@@ -1516,6 +1515,23 @@ fn compare(op: BinOp, ord: Option<std::cmp::Ordering>) -> bool {
         (BinOp::GtEq, Some(Greater | Equal)) => true,
         _ => false,
     }
+}
+
+/// The entry file of an installed package: `main` from its lipi.json, else
+/// main.lipi or src/main.lipi (or a single-file package `lipi_modules/<name>.lipi`).
+fn package_entry(modules: &Path, name: &str) -> Option<PathBuf> {
+    let dir = modules.join(name);
+    if let Ok(text) = std::fs::read_to_string(dir.join("lipi.json")) {
+        if let Ok(serde_json::Value::Object(m)) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(serde_json::Value::String(main)) = m.get("main") {
+                let file = dir.join(main);
+                if file.is_file() {
+                    return Some(file);
+                }
+            }
+        }
+    }
+    [dir.join("main.lipi"), dir.join("src").join("main.lipi"), modules.join(format!("{name}.lipi"))].into_iter().find(|p| p.is_file())
 }
 
 /// The folder containing `lipi.json`, searching upward from the main file.

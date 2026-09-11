@@ -1,0 +1,134 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "LiPi",
+  "scopeName": "source.lipi",
+  "fileTypes": ["lipi"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#type-definition" },
+    { "include": "#function-definition" },
+    { "include": "#string" },
+    { "include": "#number" },
+    { "include": "#keyword" },
+    { "include": "#constant" },
+    { "include": "#type-annotation" },
+    { "include": "#builtin" },
+    { "include": "#call" },
+    { "include": "#operator" }
+  ],
+  "repository": {
+    "comment": {
+      "match": "#.*$",
+      "name": "comment.line.number-sign.lipi"
+    },
+    "type-definition": {
+      "match": "^\\s*(type)\\s+([A-Z][A-Za-z0-9_]*)\\s*$",
+      "captures": {
+        "1": { "name": "storage.type.lipi" },
+        "2": { "name": "entity.name.type.lipi" }
+      }
+    },
+    "function-definition": {
+      "match": "^\\s*(?:(async)\\s+)?(?:(function)\\s+)?([A-Za-z_][A-Za-z0-9_]*)(?=\\([^()]*\\)\\s*(?:->\\s*[A-Za-z_\\[\\]?]+)?\\s*(?:#.*)?$)",
+      "captures": {
+        "1": { "name": "storage.modifier.async.lipi" },
+        "2": { "name": "storage.type.function.lipi" },
+        "3": { "name": "entity.name.function.lipi" }
+      }
+    },
+    "string": {
+      "patterns": [
+        {
+          "name": "string.quoted.triple.lipi",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "patterns": [{ "include": "#escape" }, { "include": "#interpolation" }]
+        },
+        {
+          "name": "string.quoted.single.triple.lipi",
+          "begin": "'''",
+          "end": "'''",
+          "patterns": [{ "include": "#escape" }]
+        },
+        {
+          "name": "string.quoted.double.lipi",
+          "begin": "\"",
+          "end": "\"|$",
+          "patterns": [{ "include": "#escape" }, { "include": "#interpolation" }]
+        },
+        {
+          "name": "string.quoted.single.lipi",
+          "begin": "'",
+          "end": "'|$",
+          "patterns": [{ "include": "#escape" }]
+        }
+      ]
+    },
+    "escape": {
+      "match": "\\\\(?:[ntr0\\\\\"'{}]|u\\{[0-9A-Fa-f]+\\})",
+      "name": "constant.character.escape.lipi"
+    },
+    "interpolation": {
+      "begin": "\\{",
+      "end": "\\}",
+      "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.lipi" } },
+      "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.lipi" } },
+      "contentName": "meta.embedded.expression.lipi",
+      "patterns": [
+        { "include": "#string" },
+        { "include": "#number" },
+        { "include": "#keyword" },
+        { "include": "#constant" },
+        { "include": "#builtin" },
+        { "include": "#call" },
+        { "include": "#operator" }
+      ]
+    },
+    "number": {
+      "patterns": [
+        { "match": "\\b0[xX][0-9A-Fa-f_]+\\b", "name": "constant.numeric.hex.lipi" },
+        { "match": "\\b[0-9][0-9_]*(?:\\.[0-9][0-9_]*)?(?:[eE][+-]?[0-9]+)?\\b", "name": "constant.numeric.lipi" }
+      ]
+    },
+    "keyword": {
+      "patterns": [
+        { "match": "\\b(if|else|for|in|while|repeat|break|continue|return|match|try|catch|finally|throw|await|to|step|with)\\b", "name": "keyword.control.lipi" },
+        { "match": "\\b(use|from|as|export)\\b", "name": "keyword.control.import.lipi" },
+        { "match": "\\b(function|const|async|type|test)\\b", "name": "storage.type.lipi" },
+        { "match": "\\b(and|or|not)\\b", "name": "keyword.operator.logical.lipi" },
+        { "match": "\\bshow\\b", "name": "keyword.other.show.lipi" },
+        { "match": "\\b(state|route|component)\\b", "name": "invalid.deprecated.reserved.lipi" }
+      ]
+    },
+    "constant": {
+      "patterns": [
+        { "match": "\\b(true|false)\\b", "name": "constant.language.boolean.lipi" },
+        { "match": "\\bnull\\b", "name": "constant.language.null.lipi" },
+        { "match": "\\bself\\b", "name": "variable.language.self.lipi" }
+      ]
+    },
+    "type-annotation": {
+      "match": "\\b(Integer|Decimal|Number|String|Boolean|Null|Array|Object|Function|Task|Any)\\b",
+      "name": "support.type.lipi"
+    },
+    "builtin": {
+      "patterns": [
+        { "match": "\\b(math|json|fs|env|http|time|process|server|crypto|database)\\b(?=\\s*\\.)", "name": "support.class.module.lipi" },
+        { "match": "\\b(toNumber|toInteger|toDecimal|toString|typeOf|input|assert|assertEqual|sleep|all|timeout|get|post|put|patch|delete)\\b(?=\\s*\\(|\\s+\")", "name": "support.function.builtin.lipi" }
+      ]
+    },
+    "call": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\()",
+      "name": "entity.name.function.call.lipi"
+    },
+    "operator": {
+      "patterns": [
+        { "match": "=>|->", "name": "keyword.operator.arrow.lipi" },
+        { "match": "\\?\\?|\\?\\.", "name": "keyword.operator.null.lipi" },
+        { "match": "==|!=|<=|>=|<|>", "name": "keyword.operator.comparison.lipi" },
+        { "match": "\\+=|-=|\\*=|/=|=", "name": "keyword.operator.assignment.lipi" },
+        { "match": "\\*\\*|[+\\-*/%]", "name": "keyword.operator.arithmetic.lipi" }
+      ]
+    }
+  }
+}

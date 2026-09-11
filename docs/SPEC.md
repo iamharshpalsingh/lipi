@@ -493,13 +493,70 @@ Hint: did you mean "user"?
 | LIP6xxx | Security | reserved |
 | LIP7xxx | Package | reserved |
 
-## 17. CLI
+Lint warnings (from `lipi lint`) use LIP9xxx: 9001 unused variable ·
+9002 unused import · 9003 shadowing · 9004 unreachable code. Package
+manager errors use LIP7xxx: 7001 checksum mismatch · 7002 package not found ·
+7003 no matching version · 7004 version conflict · 7005 invalid manifest ·
+7006 download/IO failure · 7007 version already published.
+
+## 17. CLI and tooling
 
 `lipi <file>`, `lipi run [file]`, `lipi check [file] [--json]`,
 `lipi test [path]`, `lipi new <name>` (creates `lipi.json`, `src/main.lipi`,
 `tests/`), `lipi repl` (or plain `lipi`), `lipi doctor`, `lipi --version`.
-`build dev format lint install remove update publish deploy setup` are
-reserved and report which release adds them.
+`build dev deploy setup` are reserved and report which release adds them.
+
+**Formatter:** `lipi format [paths] [--check]` rewrites files in the one
+canonical style: 4-space indentation, single spaces around operators, one
+space after `,` and `:`, no padding inside brackets, blank-line runs
+collapsed to one, two spaces before inline comments, and a final newline.
+Strings and comments are kept exactly. Formatting is idempotent, and the
+formatter refuses to write a file if its tokens would change.
+
+**Linter:** `lipi lint [paths] [--strict]` reports every `lipi check` error
+plus warnings: unused variables and imports, parameters or loop variables that
+shadow an outer variable, and code after `return`/`throw`/`break`/`continue`.
+`--strict` makes warnings fail the command (for CI).
+
+**Packages:** dependencies go in `lipi.json`:
+
+```json
+{
+  "name": "my-store",
+  "version": "1.0.0",
+  "main": "src/main.lipi",
+  "registry": "file:///C:/lipi-registry",
+  "dependencies": {
+    "utils": "path:../utils",
+    "colors": "git:https://github.com/me/lipi-colors#v1.0.0",
+    "slug": "^1.2.0"
+  }
+}
+```
+
+- `lipi install` installs everything into `lipi_modules/` and writes
+  `lipi.lock` (exact version, source and SHA-256 integrity of every package).
+  With an existing lock, the same versions are installed again and any content
+  change is refused (LIP7001). `lipi install --frozen` fails if the lock is
+  incomplete (for CI).
+- `lipi install ../utils`, `lipi install git:URL#tag` and
+  `lipi install slug@^1.2` add a dependency. Without a range, the newest
+  version is used as `^X.Y.Z`.
+- `lipi update [name…]` upgrades within the ranges. `lipi remove name`
+  removes a package and anything only it needed.
+- Resolution is deterministic, installing one version per package name.
+  Incompatible requirements are error LIP7004.
+- A package is used by name: `use slug`. Its entry file is `main` from its
+  `lipi.json`, else `main.lipi` or `src/main.lipi`.
+- **Registries** are static: `<registry>/<name>/index.json` lists versions
+  with their archive file, integrity and dependencies. `lipi publish` packs the
+  project deterministically (`.tar.gz`) and adds it to a folder registry
+  (`--registry file:///…`). Published versions can never be overwritten
+  (LIP7007). Downloads are cached in `~/.lipi/cache` (or `$LIPI_HOME`) and
+  re-verified on every use. The public LiPi Registry service isn't online yet.
+
+**Editor:** `editors/vscode` is a VS Code extension with syntax highlighting,
+indentation rules, comment toggling, bracket matching and the LiPi file icon.
 
 ## 18. Grammar (EBNF, v0.1 core)
 
@@ -556,7 +613,6 @@ primary     = INTEGER | DECIMAL | STRING | "true" | "false" | "null" | IDENT
 
 ## 20. Not yet implemented
 
-Formatter, linter, `lipi build` with the
-JavaScript target, LSP, debugger, package manager and lockfile, regex and
-encoding modules, UI components and `state`, client/server secret boundaries,
+The language server (LSP), the hosted LiPi Registry service, `lipi build`
+with the JavaScript target, the debugger, regex and encoding modules, UI components and `state`, client/server secret boundaries,
 permission-aware I/O, and generics/traits.

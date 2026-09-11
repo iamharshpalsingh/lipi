@@ -1,0 +1,33 @@
+{
+  "name": "lipi",
+  "displayName": "LiPi",
+  "description": "LiPi language support: syntax highlighting, indentation, brackets, comments and file icons.",
+  "version": "0.1.0",
+  "publisher": "lipi-lang",
+  "icon": "images/icon.png",
+  "galleryBanner": { "color": "#F6F1EA", "theme": "light" },
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "keywords": ["lipi", "language"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "lipi",
+        "aliases": ["LiPi", "lipi"],
+        "extensions": [".lipi"],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/lipi-file-light.svg",
+          "dark": "./images/lipi-file-dark.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "lipi",
+        "scopeName": "source.lipi",
+        "path": "./syntaxes/lipi.tmLanguage.json"
+      }
+    ]
+  }
+}

@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/lipi-mark-dark.svg">
+    <img src="assets/lipi-mark.svg" width="96" alt="LiPi mark">
+  </picture>
+</p>
+
 # LiPi
 
 **Unified Development Language** · *Ancient roots. Modern code.* · Easy to start. Hard to outgrow.
@@ -43,8 +50,13 @@ lipi new my-app            # lipi.json, src/main.lipi, tests/
 cd my-app && lipi run      # run the project
 lipi test                  # run test blocks in *_test.lipi files
 lipi check src/main.lipi   # find mistakes without running (--json for editors/CI)
+lipi format                # rewrite all .lipi files in the canonical style (--check for CI)
+lipi lint                  # errors + warnings: unused names, shadowing, dead code
+lipi install ../utils      # add a dependency: a folder, git:URL#tag, or name@^1.2 from a registry
 lipi doctor                # check your setup
 ```
+
+Editor support: [`editors/vscode`](editors/vscode) (syntax highlighting, indentation, file icon).
 
 ## Errors that teach
 
@@ -152,7 +164,7 @@ LIPI_TEST_POSTGRES_URL=postgres://postgres@localhost:5432/postgres cargo test -p
 | 0.1 | core executable language | ✅ |
 | 0.2 | usability, type system, modules, errors, JSON, files, HTTP client, async, tests, REPL | ✅ |
 | 0.3 | application APIs: HTTP server, middleware, cookies, WebSockets, auth foundations (crypto), database layer on SQLite and PostgreSQL | ✅ |
-| 0.5 | packages, registry, lipi.lock, formatter, linter, LSP, VS Code | planned |
+| 0.5 | formatter ✅, linter ✅, packages + lipi.lock + folder registries ✅, VS Code extension ✅ · language server (LSP), hosted registry | 🚧 in progress |
 | 0.8 | web platform: LiPi UI, JS target, JS interop | planned |
 | 1.0 | stable language and ecosystem | planned |
 | 1.x | WASM, native, desktop, Android, iOS | planned |
