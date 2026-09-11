@@ -255,8 +255,16 @@ fn cmd_format(args: &[String]) -> i32 {
             failed += 1;
             continue;
         };
-        match lipi_compiler::format::format_source(&src) {
-            Ok(out) if out != src.replace("\r\n", "\n") || src.contains("\r\n") => {
+        // Keep each file's own line endings and byte-order mark (editors on
+        // Windows often save CRLF, and some add a UTF-8 BOM).
+        let crlf = src.contains("\r\n");
+        let bom = if src.starts_with('\u{feff}') { "\u{feff}" } else { "" };
+        let formatted = lipi_compiler::format::format_source(src.trim_start_matches('\u{feff}')).map(|out| {
+            let out = if crlf { out.replace('\n', "\r\n") } else { out };
+            format!("{bom}{out}")
+        });
+        match formatted {
+            Ok(out) if out != src => {
                 changed += 1;
                 if check {
                     println!("would reformat {}", file.display());

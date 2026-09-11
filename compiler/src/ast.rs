@@ -100,6 +100,8 @@ pub struct FuncDecl {
     pub is_async: bool,
     /// Lambdas (`x => x * 2`) and trailing blocks: they inherit their surroundings' async context.
     pub is_lambda: bool,
+    /// `component Name(...)`: draws part of a page; callers may pass `key:`.
+    pub is_component: bool,
     pub span: Span,
 }
 

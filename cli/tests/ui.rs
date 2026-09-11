@@ -64,3 +64,29 @@ fn ui_programs_explain_how_to_run_them() {
     let err = String::from_utf8_lossy(&node.stderr);
     assert!(err.contains("LIP3006") && err.contains("only works in web builds"), "{err}");
 }
+
+#[test]
+fn keyed_components_keep_their_state_when_the_list_changes() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let check = Command::new(env!("CARGO_BIN_EXE_lipi")).args(["check", "tests/ui/keyed.lipi"]).current_dir(root).env("NO_COLOR", "1").output().unwrap();
+    assert!(check.status.success(), "{}", String::from_utf8_lossy(&check.stderr));
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("node isn't installed; skipping the rest of the keyed-component test");
+        return;
+    }
+    let out_dir = std::env::temp_dir().join(format!("lipi-keyed-test-{}", std::process::id()));
+    let build = Command::new(env!("CARGO_BIN_EXE_lipi")).args(["build", "tests/ui/keyed.lipi", "--out", &out_dir.to_string_lossy()]).current_dir(root).output().unwrap();
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    let run = Command::new("node")
+        .arg(root.join("cli").join("tests").join("ui_dom.js"))
+        .arg(out_dir.join("app.js"))
+        .args(["click:+ Ravi", "click:+ Ravi", "click:remove Asha"])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+    // The page after the last step (skipping the step's own label line).
+    let last = out.rsplit("--- ").next().and_then(|frame| frame.split_once('\n')).map(|(_, html)| html).unwrap_or("");
+    // Without keys, Ravi's two clicks would stay in the second row and land on Meera.
+    assert!(last.contains("Ravi: 2") && last.contains("Meera: 0") && !last.contains("Asha"), "{out}");
+}

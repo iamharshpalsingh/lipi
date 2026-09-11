@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1
+
+- LiPi UI: components accept `key:` (`Row(item, key: item.id)`), so their
+  `state` follows the item when a list is filtered or reordered. Duplicate
+  keys are reported (LIP5008).
+- `lipi format` keeps each file's line endings and UTF-8 byte-order mark, so
+  files saved with Windows (CRLF) line endings or a BOM are no longer
+  reported as needing formatting.
+
 ## 1.0.0
 
 The first stable release. Programs written for 1.0 keep working across all 1.x

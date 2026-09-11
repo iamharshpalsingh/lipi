@@ -1,0 +1,15 @@
+# Components called with key: keep their state when the list changes.
+state names = ["Asha", "Ravi", "Meera"]
+
+component Counter(name)
+    state clicks = 0
+    row
+        text "{name}: {clicks}"
+        button "+ {name}"
+            clicks += 1
+        button "remove {name}"
+            names.remove(name)
+
+page "/"
+    for name in names
+        Counter(name, key: name)

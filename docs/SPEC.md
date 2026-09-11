@@ -511,7 +511,10 @@ page "/orders/:id" with url         # url.path, url.params.id, url.query
   page, so a text field keeps its cursor while you type.
 - **State:** `state x = value` at the top level is app-wide. Inside a
   component it belongs to that component instance: it's created on the
-  first draw and kept while the component stays in the same place. Components
+  first draw and kept while the component stays in the same place. Give components in a
+  list a `key:` (`Row(item, key: item.id)`) so each one's state follows its
+  item when the list is filtered or reordered; two components with the same
+  key are an error. Components
   can't use `await`; load data in top-level code or a button's block and
   keep it in state.
 - **Elements:**
@@ -800,5 +803,5 @@ IDENT          = ( LETTER | "_" ) { LETTER | DIGIT | "_" } ;   (* ASCII *)
 
 ## 20. Not yet implemented
 
-The hosted LiPi Registry service, forms and validation helpers, keyed component identity, source maps and minified production builds,
+The hosted LiPi Registry service, forms and validation helpers, source maps and minified production builds,
 the debugger, regex and encoding modules, permission-aware I/O, and generics/traits.

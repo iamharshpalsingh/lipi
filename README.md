@@ -34,7 +34,7 @@ get "/users/:id" with request
 
 ## Install
 
-**Release archive:** unzip `lipi-1.0.0-<your system>`, then run `install.cmd`
+**Release archive:** unzip `lipi-<version>-<your system>`, then run `install.cmd`
 on Windows (no administrator rights needed) or `./install.sh` on Linux and
 macOS. The installer puts `lipi` on your PATH and adds the VS Code
 extension if VS Code is installed. Then follow

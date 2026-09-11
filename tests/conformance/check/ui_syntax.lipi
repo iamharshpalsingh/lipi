@@ -22,7 +22,7 @@ page "/"
         items.push({title: draft, done: false})
         draft = ""
     for i, item in items
-        TodoItem(item, i)
+        TodoItem(item, i, key: item.title)
     Footer(items.length)
 
 page "/about/:section" with url

@@ -1007,7 +1007,7 @@ impl Gen<'_> {
             Some(t) => (type_js(t), self.site(t.span, "").to_string()),
             None => ("null".into(), "null".into()),
         };
-        let meta = format!("{{n:{},p:[{}],r:{ret},rs:{ret_site},a:{js_async},l:{}}}", js_str(&f.name.text), params.join(","), f.is_lambda);
+        let meta = format!("{{n:{},p:[{}],r:{ret},rs:{ret_site},a:{js_async},l:{},c:{component}}}", js_str(&f.name.text), params.join(","), f.is_lambda);
         let mut js_params: Vec<String> = Vec::new();
         if method {
             js_params.push(var("self"));

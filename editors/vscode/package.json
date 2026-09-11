@@ -2,7 +2,7 @@
   "name": "lipi",
   "displayName": "LiPi",
   "description": "LiPi language support: errors as you type, completion, hover docs, go to definition, formatting, syntax highlighting and file icons.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "lipi-lang",
   "license": "MIT",
   "icon": "images/icon.png",

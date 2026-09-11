@@ -335,7 +335,11 @@ impl<'a> Parser<'a> {
                 if name == "component" && matches!(self.peek_at(1), Tok::Ident(_)) && matches!(self.peek_at(2), Tok::LParen) {
                     self.advance();
                     match self.try_func_def(false, true)? {
-                        Some(f) => return Ok(Stmt { kind: StmtKind::Component(f), span: start }),
+                        Some(f) => {
+                            let mut f = Rc::try_unwrap(f).unwrap_or_else(|rc| (*rc).clone());
+                            f.is_component = true;
+                            return Ok(Stmt { kind: StmtKind::Component(Rc::new(f)), span: start });
+                        }
                         None => unreachable!("explicit definitions report their own errors"),
                     }
                 }
@@ -472,7 +476,7 @@ impl<'a> Parser<'a> {
             }
         }
         let body = self.parse_block("this line", start)?;
-        let decl = FuncDecl { name: Name { res: Default::default(), text: "<block>".into(), span: start }, params, ret: None, body, is_async: false, is_lambda: true, span: start };
+        let decl = FuncDecl { name: Name { res: Default::default(), text: "<block>".into(), span: start }, params, ret: None, body, is_async: false, is_lambda: true, is_component: false, span: start };
         Ok(Expr { res: Default::default(), kind: ExprKind::Lambda(Rc::new(decl)), span: start })
     }
 
@@ -735,7 +739,7 @@ impl<'a> Parser<'a> {
                 let owner = format!("{}(...)", name.text);
                 let body = self.parse_block(&owner, name.span)?;
                 let span = name.span;
-                Ok(Some(Rc::new(FuncDecl { name, params, ret, body, is_async, is_lambda: false, span })))
+                Ok(Some(Rc::new(FuncDecl { name, params, ret, body, is_async, is_lambda: false, is_component: false, span })))
             }
             Err(e) if explicit => Err(e),
             Ok((name, _, _)) if explicit => Err(Diagnostic::error(format!("expected an indented body for \"{}\"", name.text), name.span)
@@ -861,7 +865,7 @@ impl<'a> Parser<'a> {
         let body = self.parse_expression()?;
         let span = start.to(body.span);
         let ret = Stmt { span: body.span, kind: StmtKind::Return(Some(body)) };
-        let decl = FuncDecl { name: Name { res: Default::default(), text: "<lambda>".into(), span: start }, params, ret: None, body: vec![ret], is_async: false, is_lambda: true, span };
+        let decl = FuncDecl { name: Name { res: Default::default(), text: "<lambda>".into(), span: start }, params, ret: None, body: vec![ret], is_async: false, is_lambda: true, is_component: false, span };
         Ok(Expr { res: Default::default(), kind: ExprKind::Lambda(Rc::new(decl)), span })
     }
 

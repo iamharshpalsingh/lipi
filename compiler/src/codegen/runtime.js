@@ -462,6 +462,13 @@ function $call(f, pos, named, s) {
 
 function callFn(f, pos, named, s) {
   const m = f.$m, params = m.p;
+  // `key:` gives a component its identity on the page; it isn't a parameter.
+  let key;
+  if (m.c && named && "key" in named && !params.some((p) => p[0] === "key")) {
+    key = named.key;
+    named = { ...named };
+    delete named.key;
+  }
   if ($rt.frames.length >= MAX_DEPTH) $fail("LIP5005", `too much recursion: ${fname(m)} called itself too many times`, s, "Make sure the recursion has a case where it stops calling itself.");
   if (pos.length > params.length) {
     const n = params.length;
@@ -485,6 +492,7 @@ function callFn(f, pos, named, s) {
   }
   const site = siteOf(s);
   $rt.frames.push({ n: m.n === "<block>" ? "<block>" : m.l ? "<function>" : m.n, file: fileOf(site), line: site ? site.l : 0 });
+  if (m.c) $ui.nextKey = key;
   let result;
   try {
     result = f.apply(null, args);
@@ -1444,9 +1452,19 @@ class Instance {
 $ui.enter = (name, s) => {
   if ($ui.stack === null) $fail("LIP6002", `the component "${name}" can only be used while drawing a page`, s, "Use it inside a `page` block or another component.");
   const parent = $ui.path[$ui.path.length - 1];
-  const n = parent.counts.get(name) || 0;
-  parent.counts.set(name, n + 1);
-  const key = `${parent.key}/${name}#${n}`;
+  // A component called with `key:` is identified by that key, so its state
+  // follows its item when a list is filtered or reordered.
+  const given = $ui.nextKey;
+  $ui.nextKey = undefined;
+  let key;
+  if (given === undefined || given === null) {
+    const n = parent.counts.get(name) || 0;
+    parent.counts.set(name, n + 1);
+    key = `${parent.key}/${name}#${n}`;
+  } else {
+    key = `${parent.key}/${name}=${repr(given)}`;
+    if ($ui.seen.has(key)) $fail("LIP5008", `two "${name}" components have the same key ${repr(given)}`, s, "Each item in a list needs its own key, such as its id.");
+  }
   $ui.seen.add(key);
   let inst = $ui.instances.get(key);
   if (!inst) { inst = new Instance(); $ui.instances.set(key, inst); }

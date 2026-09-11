@@ -1336,6 +1336,12 @@ impl Interpreter {
 
     fn call_function(&mut self, c: &Rc<Closure>, pos: Vec<Value>, named: Vec<(String, Value)>, span: Span) -> Result<Value, Flow> {
         let decl = c.decl.clone();
+        // `key:` gives a component its identity on a page; it isn't a parameter.
+        let named = if decl.is_component && !decl.params.iter().any(|p| p.name.text == "key") {
+            named.into_iter().filter(|(n, _)| n != "key").collect()
+        } else {
+            named
+        };
         let fname = || if decl.is_lambda { "this function".to_string() } else { format!("\"{}\"", decl.name.text) };
         if self.depth >= MAX_DEPTH {
             return Err(self.err(

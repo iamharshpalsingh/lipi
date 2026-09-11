@@ -209,6 +209,8 @@ fn arith_result(op: BinOp, l: Ty, r: Ty) -> Ty {
 struct Sig {
     name: String,
     params: Vec<(String, Ty, bool)>, // name, declared type, has default
+    /// Components also accept `key:`.
+    component: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -987,7 +989,7 @@ impl Checker {
                 }
                 Some(n) => {
                     let found = sig.params.iter().position(|p| p.0 == n.text);
-                    if found.is_none() {
+                    if found.is_none() && !(sig.component && n.text == "key") {
                         let hint = suggest::did_you_mean(&n.text, sig.params.iter().map(|p| p.0.as_str())).unwrap_or_else(signature);
                         self.err(Diagnostic::error(format!("\"{}\" has no parameter named \"{}\"", sig.name, n.text), n.span).with_code("LIP1007").with_hint(hint));
                     }
@@ -1061,11 +1063,16 @@ fn collect_stmt(stmt: &Stmt, out: &mut Vec<Collected>, depth: usize) {
         }),
         StmtKind::State { name, ty, .. } => out.push(Collected { name: name.text.clone(), ty: ty.clone(), constant: false, sig: None, def_span: None }),
         StmtKind::Func(f) | StmtKind::Component(f) => {
-            let sig = Sig { name: f.name.text.clone(), params: f.params.iter().map(|p| (p.name.text.clone(), param_ty(p), p.default.is_some())).collect() };
+            let sig = Sig {
+                name: f.name.text.clone(),
+                params: f.params.iter().map(|p| (p.name.text.clone(), param_ty(p), p.default.is_some())).collect(),
+                component: f.is_component,
+            };
             out.push(Collected { name: f.name.text.clone(), ty: None, constant: false, sig: Some(sig), def_span: top(f.name.span) });
         }
         StmtKind::TypeDef(t) => {
             let sig = Sig {
+                component: false,
                 name: t.name.text.clone(),
                 params: t
                     .fields
