@@ -1,0 +1,10 @@
+4.0 1024 3 9 2 10
+2.7 -2 2 3.142
+{a: [1, 2.5, "x"], b: null, c: true} 2.5 Integer
+{"name":"LiPi","list":[1,2]}
+{
+  "a": 1
+}
+1970-01-01T00:00:00Z friday
+12 12 3.0 [1, 2] Null
+assertions passed

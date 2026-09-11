@@ -1,0 +1,5 @@
+12
+2.5
+3 30 5 ["a", "b"] Dez
+LIP2002 "age" should be an Integer, but this is a String
+[10, 2, 8] {name: "Asha", visits: 2, city: "Pune"}

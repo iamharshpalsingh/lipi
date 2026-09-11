@@ -1,0 +1,2 @@
+user = json.parse("null")
+show user.name

@@ -1,0 +1,7 @@
+ERROR LIP0001: LiPi doesn't use ':' to start a block
+
+tests/conformance/e1_block_colon.lipi:2:13
+    if score > 5:
+                ^
+
+Hint: Remove the ':'. The indented lines below `if` form its block.

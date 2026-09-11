@@ -1,0 +1,9 @@
+14 20 512 -4 2 3 2.5 4.5 5
+true true false true true true true
+true true
+true true true
+false true false true
+default 0 null
+big
+[1, 2, 3, 4, 5] [10, 5, 0] [0, 3, 6, 9]
+abcd [1, 2, 3]

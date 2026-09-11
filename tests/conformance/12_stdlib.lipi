@@ -1,0 +1,15 @@
+# SPEC §15: standard library essentials
+show math.sqrt(16), math.pow(2, 10), math.abs(-3), math.max(1, 9, 4), math.min([4, 2, 8]), math.clamp(15, 0, 10)
+show math.round(2.675, 1), math.floor(-1.5), math.ceil(1.2), math.pi.round(3)
+
+data = json.parse('{"a": [1, 2.5, "x"], "b": null, "c": true}')
+show data, data.a[1], typeOf(data.a[0])
+show json.stringify({name: "LiPi", list: [1, 2]})
+show json.stringify({a: 1}, pretty: true)
+
+show time.iso(0), time.date(86400000).weekday
+show toNumber("12"), toInteger("12.9"), toDecimal("3"), toString([1, 2]), typeOf(toNumber("x"))
+
+assert(1 + 1 == 2)
+assertEqual([1, 2], [1, 2])
+show "assertions passed"

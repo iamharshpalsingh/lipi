@@ -1,0 +1,44 @@
+# SPEC §10: errors
+try
+    throw "plain message"
+catch err
+    show err.code, err.category, err.message
+
+try
+    throw {message: "custom", status: 404}
+catch err
+    show err.message, err.status
+
+steps = []
+try
+    steps.push("try")
+    items = [1]
+    show items[5]
+catch err
+    steps.push("catch {err.code}")
+finally
+    steps.push("finally")
+show steps
+
+try
+    try
+        throw "inner"
+    finally
+        show "inner finally"
+catch err
+    show "outer caught:", err.message
+
+try
+    throw "no name needed"
+catch
+    show "caught without a name"
+
+risky(n)
+    if n > 2
+        throw "too big: {n}"
+    return n
+
+try
+    risky(5)
+catch err
+    show err.message, err.line

@@ -1,0 +1,5 @@
+Point {x: 3, y: 4, label: null} 5.0 Point {x: 4, y: 4, label: null} Point {x: 1, y: 0, label: null}
+true false Point
+corner
+LIP2002
+LIP2003 missing "x" when creating a Point

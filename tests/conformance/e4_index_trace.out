@@ -1,0 +1,10 @@
+ERROR LIP5001: index 2 is outside array length 2
+
+tests/conformance/e4_index_trace.lipi:2:18
+        return items[2]
+                     ^
+
+Hint: Positions start at 0, so the last one is 1. Negative positions count from the end: -1 is the last item.
+
+  in third() called at tests/conformance/e4_index_trace.lipi:5
+  in firstOfThird() called at tests/conformance/e4_index_trace.lipi:7

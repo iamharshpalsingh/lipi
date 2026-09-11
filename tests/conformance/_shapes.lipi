@@ -1,0 +1,8 @@
+# A module used by 09_modules.lipi
+export area(w, h)
+    return w * h
+
+export const version = "1.0"
+unitSquare = {w: 1, h: 1}
+secret = "private to this file"
+export unitSquare

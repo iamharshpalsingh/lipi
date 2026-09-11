@@ -1,0 +1,54 @@
+# SPEC §7: control flow
+grade(score)
+    if score >= 90
+        return "A"
+    else if score >= 75
+        return "B"
+    else
+        return "C"
+
+show grade(95), grade(80), grade(10)
+
+n = 0
+while true
+    n += 1
+    if n % 2 == 0
+        continue
+    if n > 7
+        break
+show n
+
+repeat 3
+    show "hi"
+
+for fruit in ["apple", "kiwi"]
+    show fruit
+for i, letter in "ab"
+    show i, letter
+for key in {x: 1, y: 2}
+    show key
+for key, value in {x: 1, y: 2}
+    show key, value
+for i in 1 to 3
+    show i
+total = 0
+for i in 10 to 1 step -3
+    total += i
+show total, i
+
+describe(value)
+    match value
+        0
+            return "zero"
+        1, 2, 3
+            return "small"
+        4 to 9
+            return "medium"
+        "hello"
+            return "greeting"
+        _ if value < 0
+            return "negative"
+        else
+            return "other"
+
+show describe(0), describe(2), describe(5), describe(-3), describe("hello"), describe(100)

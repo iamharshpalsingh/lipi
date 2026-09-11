@@ -1,0 +1,7 @@
+ERROR LIP5003: cannot read ".name" of null
+
+tests/conformance/e3_null_access.lipi:2:11
+    show user.name
+              ^^^^
+
+Hint: "user" is null. Use user?.name to get null instead of an error.

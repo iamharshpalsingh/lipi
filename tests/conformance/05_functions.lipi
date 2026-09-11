@@ -1,0 +1,58 @@
+# SPEC §8: functions
+add(a, b)
+    return a + b
+
+function greet(name = "friend", punctuation: String = "!") -> String
+    return "Hello, " + name + punctuation
+
+show add(2, 3), greet(), greet("Asha"), greet(punctuation: "?", name: "Ravi")
+
+double = x => x * 2
+combine = (a, b) => a + b
+show double(21), combine("a", "b"), [1, 2, 3].map(x => x * 10)
+
+makeCounter()
+    count = 0
+    next()
+        count += 1
+        return count
+    return next
+
+counter = makeCounter()
+counter()
+counter()
+show counter()
+
+apply(f, value)
+    return f(value)
+
+show apply(double, 4)
+
+twice(action)
+    action()
+    action()
+
+twice
+    show "block runs"
+
+each(items, action)
+    for item in items
+        action(item)
+
+each([1, 2]) with item
+    show "item {item}"
+
+show early()
+
+early()
+    return "defined later, called earlier"
+
+factorial(n)
+    return 1 if n <= 1 else n * factorial(n - 1)
+
+show factorial(20)
+
+nothing()
+    marker = 1
+
+show nothing()

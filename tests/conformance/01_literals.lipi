@@ -1,0 +1,15 @@
+# SPEC §3-4: literals, numbers and strings
+show 42, -7, 1_000_000, 0xff, 2.5, 1e3, 10 / 4, 7 / 7
+show true, false, null
+name = "LiPi"
+show "Hello {name}!", 'Hello {name}!', "braces: \{ not code }"
+show "tab:\tend", "quote: \" backslash: \\"
+show "sum: {1 + 2}", "call: {name.upper()}"
+show [], [1, "two", 3.0, null], {}, {a: 1, "b c": 2, 3: "three"}
+short = 5
+show {name, short}
+
+add(a, b)
+    return a + b
+
+show typeOf(1), typeOf(1.0), typeOf("x"), typeOf(true), typeOf(null), typeOf([]), typeOf({}), typeOf(add)

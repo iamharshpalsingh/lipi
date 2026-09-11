@@ -12,7 +12,7 @@ use std::rc::Rc;
 type PResult<T> = Result<T, Diagnostic>;
 
 /// Words kept free for upcoming LiPi features (they can't be used as names).
-pub const RESERVED: &[&str] = &["state", "route", "component", "server"];
+pub const RESERVED: &[&str] = &["state", "route", "component", "server", "enum", "trait", "yield"];
 
 pub struct Parser<'a> {
     src: &'a str,

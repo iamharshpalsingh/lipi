@@ -1,0 +1,12 @@
+# SPEC §12: modules
+use "./_shapes.lipi"
+use "./_shapes.lipi" as geo
+from "./_shapes.lipi" use area, unitSquare
+use math
+
+show area(2, 3), unitSquare, geo.area(1, 1), _shapes.version, math.floor(2.9)
+
+try
+    show geo.secret
+catch err
+    show err.code

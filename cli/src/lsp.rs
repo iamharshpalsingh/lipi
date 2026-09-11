@@ -28,7 +28,7 @@ const DOCS: &[(&str, &str, &str)] = &[
     ("sleep", "sleep(milliseconds) -> Task", "Waits in the background. Use with await."),
     ("all", "all(tasks) -> Array", "Waits for every task and returns their results in order."),
     ("timeout", "timeout(task, milliseconds)", "Waits for a task but fails with LIP4002 if it takes too long."),
-    ("page", "page \"/path\" with route", "Declares a page of a web app (lipi build). The block draws it; route.params holds :parts of the path."),
+    ("page", "page \"/path\" with url", "Declares a page of a web app (lipi build). The block draws it; url.params holds the :parts of the path."),
     ("card", "card + block", "A boxed group of elements. The block draws what's inside."),
     ("row", "row + block", "Places the elements drawn in the block side by side."),
     ("column", "column + block", "Stacks the elements drawn in the block."),

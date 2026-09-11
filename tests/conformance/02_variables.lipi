@@ -1,0 +1,30 @@
+# SPEC §5, §13: variables, constants, compound assignment, type annotations
+count = 1
+count += 4
+count -= 1
+count *= 3
+show count
+ratio = 10
+ratio /= 4
+show ratio
+
+const limit = 3
+age: Integer = 30
+price: Decimal = 5
+tags: Array[String] = ["a", "b"]
+nickname: String? = null
+nickname = "Dez"
+show limit, age, price, tags, nickname
+
+try
+    age = json.parse('"old"')
+catch err
+    show err.code, err.message
+
+items = [1, 2, 3]
+items[0] = 10
+items[-1] += 5
+user = {name: "Asha", visits: 1}
+user.visits += 1
+user["city"] = "Pune"
+show items, user

@@ -492,12 +492,13 @@ page "/"
         ProductCard(product)
     link "Checkout", to: "/checkout"
 
-page "/orders/:id" with route       # route.params.id, route.query
-    heading "Order {route.params.id}"
+page "/orders/:id" with url         # url.path, url.params.id, url.query
+    heading "Order {url.params.id}"
 ```
 
 - **Pages:** `page "/path"` + block, declared at the top level. Paths can
-  have `:name` parts and a final `*` (in `route.params.rest`). Addresses use
+  have `:name` parts and a final `*` (in `url.params.rest`); the block's
+  optional input (`with url`) holds `path`, `params` and `query`. Addresses use
   the `#/path` form, so a build works when opened straight from disk.
   `navigate("/path")` changes page from code.
 - **Drawing:** a page's block runs from the top on every redraw. Each element
@@ -584,7 +585,7 @@ Hint: did you mean "user"?
 |---|---|---|
 | LIP0xxx | Syntax | 0001 unexpected token · 0002 indentation · 0003 string · 0004 invalid character · 0005 missing block · 0006 invalid assignment target · 0007 number literal · 0008 habit from another language |
 | LIP1xxx | Name | 1001 duplicate definition · 1002 undefined variable · 1003 constant reassigned · 1004 unknown member · 1005 reserved word · 1006 misplaced return/break/continue · 1007 unknown parameter |
-| LIP2xxx | Type | 2001 operator type mismatch · 2002 declared type mismatch · 2003 argument count · 2004 argument type · 2005 condition not Boolean · 2006 unknown type · 2007 return type · 2008 not callable |
+| LIP2xxx | Type | 2000 other type error · 2001 operator type mismatch · 2002 declared type mismatch · 2003 argument count · 2004 argument type · 2005 condition not Boolean · 2006 unknown type · 2007 return type · 2008 not callable |
 | LIP3xxx | Module | 3001 module not found · 3002 circular use · 3003 not exported · 3004 ambiguous module · 3005 invalid export · 3006 not available in JavaScript builds yet · 3007 only available in JavaScript builds |
 | LIP4xxx | Async | 4001 await outside async context · 4002 timed out · 4003 cancelled · 4004 background task failed |
 | LIP5xxx | Runtime | 5000 general · 5001 index out of range · 5002 division by zero · 5003 null access · 5004 missing field · 5005 recursion limit · 5006 thrown by the program · 5007 file/IO · 5008 invalid argument · 5009 Integer overflow · 5010 assertion failed · 5011 database · 5012 JavaScript error |
@@ -695,41 +696,89 @@ stdio, so any LSP editor can use it. It provides:
 `lipi lsp` and adds syntax highlighting, indentation rules, comment toggling,
 bracket matching, format-on-save and the LiPi file icon.
 
-## 18. Grammar (EBNF, v0.1 core)
+## 18. Grammar (EBNF, v1.0)
+
+The grammar is frozen for LiPi 1.x (see [STABILITY.md](STABILITY.md)).
+`tests/conformance` uses every form below.
 
 ```ebnf
-program     = { statement } ;
-statement   = show | binding | const | assignment | if | while | for | repeat
-            | function | return | break | continue | throw | try | match
-            | use | export | type | test | expression [ trailing_block ] ;
-binding     = IDENT [ ":" type ] "=" expression ;
-const       = "const" IDENT [ ":" type ] "=" expression ;
-assignment  = lvalue ( "=" | "+=" | "-=" | "*=" | "/=" ) expression ;
-if          = "if" expression block { "else" "if" expression block } [ "else" block ] ;
-function    = [ "async" ] [ "function" ] IDENT "(" [ params ] ")" [ "->" type ] block ;
-match       = "match" expression NEWLINE INDENT { patterns [ "if" expression ] block }
-              [ "else" block ] DEDENT ;
-use         = "use" module [ "as" IDENT ] | "from" module "use" IDENT { "," IDENT } ;
-export      = "export" ( IDENT { "," IDENT } | function | const | binding | type ) ;
-block       = NEWLINE INDENT { statement } DEDENT ;
-trailing_block = [ "with" IDENT { "," IDENT } ] block ;
-expression  = lambda | choice ;
-choice      = coalesce [ "if" coalesce "else" expression ] ;
-coalesce    = or { "??" or } ;
-or          = and { "or" and } ;
-and         = not { "and" not } ;
-not         = "not" not | comparison ;
-comparison  = range [ ( "==" | "!=" | "<" | "<=" | ">" | ">=" | "in" | "not" "in" ) range ] ;
-range       = term [ "to" term [ "step" term ] ] ;
-term        = factor { ( "+" | "-" ) factor } ;
-factor      = unary { ( "*" | "/" | "%" ) unary } ;
-unary       = ( "-" | "await" ) unary | power ;
-power       = postfix [ "**" unary ] ;
-postfix     = primary { "(" [ args ] ")" | "." IDENT | "?." IDENT | "[" expression "]" } ;
-primary     = INTEGER | DECIMAL | STRING | "true" | "false" | "null" | IDENT
-            | "[" [ expression { "," expression } ] "]"
-            | "{" [ key ":" expression { "," key ":" expression } ] "}"
-            | "(" expression ")" ;
+(* Layout: a block is the lines indented 4 spaces deeper than the line that
+   owns it (INDENT/DEDENT). A line that starts with "." continues the
+   previous line. Comments start with # and run to the end of the line. *)
+program        = { statement } ;
+block          = NEWLINE INDENT statement { statement } DEDENT ;
+
+statement      = show | const | typed_binding | state | assignment | if | while | for
+               | repeat | function | component | return | break | continue | throw
+               | try | match | use | from_use | export | type | test | call_statement ;
+
+show           = "show" [ expression { "," expression } ] ;
+const          = "const" IDENT [ ":" type ] "=" expression ;
+typed_binding  = IDENT ":" type "=" expression ;
+state          = "state" IDENT [ ":" type ] "=" expression ;
+assignment     = lvalue ( "=" | "+=" | "-=" | "*=" | "/=" ) expression ;
+lvalue         = IDENT | postfix "." name | postfix "[" expression "]" ;
+if             = "if" expression block { "else" "if" expression block } [ "else" block ] ;
+while          = "while" expression block ;
+for            = "for" IDENT [ "," IDENT ] "in" expression block ;
+repeat         = "repeat" expression block ;
+function       = [ "async" ] [ "function" ] IDENT "(" [ params ] ")" [ "->" type ] block ;
+component      = "component" IDENT "(" [ params ] ")" block ;
+params         = param { "," param } ;
+param          = IDENT [ ":" type ] [ "=" expression ] ;
+return         = "return" [ expression ] ;
+throw          = "throw" expression ;
+try            = "try" block [ "catch" [ IDENT ] block ] [ "finally" block ] ;
+                 (* at least one of catch and finally *)
+match          = "match" expression NEWLINE INDENT { case } [ "else" block ] DEDENT ;
+case           = expression { "," expression } [ "if" expression ] block ;
+                 (* "_" matches anything; "a to b" matches a number in the range *)
+use            = "use" module [ "as" IDENT ] ;
+from_use       = "from" module "use" IDENT { "," IDENT } ;
+module         = STRING | IDENT { "." name } ;
+export         = "export" ( IDENT { "," IDENT } | function | component | const
+               | typed_binding | state | assignment | type ) ;
+type           = "type" IDENT NEWLINE INDENT { field | method } DEDENT ;
+field          = IDENT [ ":" type ] [ "=" expression ] ;
+method         = [ "async" ] [ "function" ] IDENT "(" [ params ] ")" [ "->" type ] block ;
+test           = "test" STRING block ;
+call_statement = expression [ command_args ] [ trailing_block ] ;
+                 (* command arguments only follow a name or dotted name: get "/users" *)
+command_args   = arg { "," arg } ;
+trailing_block = [ "with" param { "," param } ] block ;
+                 (* passed as the last argument, as a function *)
+
+type           = ( IDENT [ "[" type "]" ] | "[" type "]" | "null" ) { "?" } ;
+
+expression     = lambda | choice ;
+lambda         = ( IDENT | "(" [ params ] ")" ) "=>" expression ;
+choice         = coalesce [ "if" coalesce "else" expression ] ;
+coalesce       = or { "??" or } ;
+or             = and { "or" and } ;
+and            = not { "and" not } ;
+not            = "not" not | comparison ;
+comparison     = range [ ( "==" | "!=" | "<" | "<=" | ">" | ">=" | "in" | "not" "in" ) range ] ;
+range          = term [ "to" term [ "step" term ] ] ;
+term           = factor { ( "+" | "-" ) factor } ;
+factor         = unary { ( "*" | "/" | "%" ) unary } ;
+unary          = ( "-" | "await" ) unary | power ;
+power          = postfix [ "**" unary ] ;              (* right-associative; -2 ** 2 is -4 *)
+postfix        = primary { "(" [ args ] ")" | "." name | "?." name | "[" expression "]" } ;
+args           = arg { "," arg } ;
+arg            = [ IDENT ":" ] expression ;          (* named arguments come last *)
+primary        = INTEGER | DECIMAL | STRING | "true" | "false" | "null" | IDENT
+               | "[" [ expression { "," expression } [ "," ] ] "]"
+               | "{" [ entry { "," entry } [ "," ] ] "}"
+               | "(" expression ")" ;
+entry          = ( name | STRING | INTEGER ) ":" expression
+               | IDENT ;                              (* {name} is short for {name: name} *)
+name           = IDENT | KEYWORD ;                    (* keywords work after "." and as keys *)
+
+INTEGER        = DIGIT { DIGIT | "_" } | "0x" HEX { HEX | "_" } ;
+DECIMAL        = DIGITS "." DIGITS [ EXPONENT ] | DIGITS EXPONENT ;
+STRING         = '"' { CHAR | ESCAPE | "{" expression "}" } '"'  (* interpolates *)
+               | "'" { CHAR } "'" ;                  (* literal *)
+IDENT          = ( LETTER | "_" ) { LETTER | DIGIT | "_" } ;   (* ASCII *)
 ```
 
 ## 19. Decisions taken where the plan left a choice

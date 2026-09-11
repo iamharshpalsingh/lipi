@@ -1,0 +1,7 @@
+ERROR LIP1005: "route" is a reserved word
+
+tests/conformance/e2_reserved_word.lipi:1:1
+    route = "/home"
+    ^^^^^
+
+Hint: It is reserved for upcoming LiPi features. Pick another name.

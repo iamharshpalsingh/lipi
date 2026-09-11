@@ -167,7 +167,10 @@ paid = db.orders.where(status: "paid", order: "-id")
 db.orders.update(order.id, {status: "paid"})
 ```
 
-The full reference is [docs/SPEC.md](docs/SPEC.md).
+The full reference is [docs/SPEC.md](docs/SPEC.md). From 1.0 the language is
+frozen: programs keep working across 1.x releases
+([docs/STABILITY.md](docs/STABILITY.md)), and the promise is checked by the
+conformance suite in [`tests/conformance`](tests/conformance).
 
 ## Repository layout
 

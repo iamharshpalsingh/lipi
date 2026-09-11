@@ -1,0 +1,33 @@
+# SPEC §15.3: LiPi UI syntax (checked and built, not run: it needs a browser)
+state items = []
+state draft: String = ""
+
+component TodoItem(item, index)
+    state editing = false
+    row
+        text "{index + 1}."
+        checkbox item.done, item.title with checked
+            item.done = checked
+        button "Edit" if not editing else "Save"
+            editing = not editing
+
+export component Footer(count)
+    text "{count} items", class: "muted"
+
+page "/"
+    heading "Todos", level: 1
+    field draft, placeholder: "What needs doing?" with value
+        draft = value
+    button "Add", disabled: draft == ""
+        items.push({title: draft, done: false})
+        draft = ""
+    for i, item in items
+        TodoItem(item, i)
+    Footer(items.length)
+
+page "/about/:section" with url
+    heading "About {url.params.section}"
+    link "Home", to: "/"
+    image "logo.svg", alt: "LiPi"
+    element "ul"
+        element "li", "one"

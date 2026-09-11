@@ -1,0 +1,28 @@
+# SPEC §9: types
+type Point
+    x: Integer
+    y: Integer = 0
+    label: String?
+
+    length()
+        return math.sqrt(self.x ** 2 + self.y ** 2)
+
+    moved(dx, dy = 0)
+        return Point(self.x + dx, self.y + dy)
+
+p = Point(3, 4)
+show p, p.length(), p.moved(1), Point(x: 1)
+show p == Point(3, 4), p == Point(3, 5), typeOf(p)
+p.label = "corner"
+show p.label
+
+try
+    p.x = json.parse('"three"')
+catch err
+    show err.code
+
+make = Point
+try
+    make()
+catch err
+    show err.code, err.message

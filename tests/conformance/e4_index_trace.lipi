@@ -1,0 +1,7 @@
+third(items)
+    return items[2]
+
+firstOfThird(lists)
+    return third(lists[0])
+
+show firstOfThird([[1, 2]])

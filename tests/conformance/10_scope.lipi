@@ -1,0 +1,43 @@
+# SPEC §5, §19: scope - an assignment updates the nearest variable of that name
+total = 0
+
+addToTotal(n)
+    total += n
+
+addToTotal(5)
+addToTotal(7)
+show total
+
+localOnly()
+    temp = "local"
+    return temp
+
+show localOnly()
+
+for i in 1 to 3
+    last = i
+show last, i
+
+outer()
+    value = "outer"
+    inner()
+        value = "changed by inner"
+    inner()
+    return value
+
+show outer()
+
+makeAdders()
+    adders = []
+    for n in 1 to 3
+        adders.push(x => x + n)
+    return adders
+
+show makeAdders().map(f => f(10))
+
+if true
+    insideIf = "visible after the if"
+show insideIf
+
+test "the scope rule"
+    assertEqual(total, 12)

@@ -1,0 +1,23 @@
+# SPEC §11: async and await
+async fetchNumber(n)
+    await sleep(5)
+    return n * 10
+
+task = fetchNumber(4)
+show typeOf(task)
+show await task
+results = await all([fetchNumber(1), fetchNumber(2)])
+show results
+
+async failing()
+    throw "async boom"
+
+try
+    await failing()
+catch err
+    show "caught:", err.message
+
+try
+    await timeout(sleep(1000), 10)
+catch err
+    show err.code

@@ -1,0 +1,8 @@
+42 -7 1000000 255 2.5 1000.0 2.5 1.0
+true false null
+Hello LiPi! Hello {name}! braces: { not code }
+tab:	end quote: " backslash: /
+sum: 3 call: LIPI
+[] [1, "two", 3.0, null] {} {a: 1, "b c": 2, "3": "three"}
+{name: "LiPi", short: 5}
+Integer Decimal String Boolean Null Array Object Function

@@ -1,0 +1,7 @@
+LIP5006 Runtime plain message
+custom 404
+["try", "catch LIP5001", "finally"]
+inner finally
+outer caught: inner
+caught without a name
+too big: 5 38
