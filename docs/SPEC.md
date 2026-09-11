@@ -423,10 +423,11 @@ server.websocket "/chat" with socket
 - Handlers run one at a time on the main thread; connection I/O runs on
   background threads.
 
-### 15.2 Database (SQLite; PostgreSQL next)
+### 15.2 Database (SQLite and PostgreSQL)
 
 ```lipi
-db = database.open("shop.db")              # ":memory:" for a throwaway database
+db = database.open("shop.db")              # SQLite file; ":memory:" for a throwaway database
+db = database.open("postgres://user:password@host:5432/shop")   # PostgreSQL (TLS when the server offers it)
 users = database.users.all()               # the default database: DATABASE_URL, else lipi.db in the project
 
 user = db.users.create({name: "Dezy", age: 25, tags: ["admin"]})   # returns the row, with its id
@@ -445,13 +446,21 @@ db.migrate("001_create_products", "CREATE TABLE products (...)")   # runs once
 db.tables()
 ```
 
+- **The same LiPi code runs on both databases.** `?` and `:name`
+  placeholders in `query`/`run` are rewritten to `$1, $2, …` for PostgreSQL.
 - **Values are always parameters**, never pasted into SQL. Table and column
   names must be plain identifiers.
+- PostgreSQL types map to LiPi values: integer types become Integer;
+  real/double/NUMERIC become Decimal (whole NUMERICs become Integer); BOOLEAN
+  becomes Boolean; JSON/JSONB become values; TIMESTAMP(TZ)/DATE become ISO
+  Strings (you can also store `time.now()` Integers into timestamp columns);
+  UUID becomes a String.
 - **Schema grows with your data:** the first `create` makes the table (`id`
   is an auto-incrementing primary key), and new fields in `create`/`update`
   add columns. For production schemas, use `migrate`.
-- Storage types: Integer→INTEGER, Decimal→REAL, String→TEXT, Boolean→BOOLEAN
-  (read back as `true`/`false`), Array/Object→JSON (read back as values).
+- Auto-created column types: Integer→INTEGER (BIGINT on PostgreSQL),
+  Decimal→REAL (DOUBLE PRECISION), String→TEXT, Boolean→BOOLEAN,
+  Array/Object→JSON (JSONB). All of them read back as the original LiPi values.
 - Reading a table that doesn't exist yet gives `[]`, `0` or `null`.
 - Database errors are LIP5011 and carry hints (missing table, unique
   violation, SQL syntax).
@@ -547,7 +556,7 @@ primary     = INTEGER | DECIMAL | STRING | "true" | "false" | "null" | IDENT
 
 ## 20. Not yet implemented
 
-PostgreSQL driver (next in 0.3), formatter, linter, `lipi build` with the
+Formatter, linter, `lipi build` with the
 JavaScript target, LSP, debugger, package manager and lockfile, regex and
 encoding modules, UI components and `state`, client/server secret boundaries,
 permission-aware I/O, and generics/traits.

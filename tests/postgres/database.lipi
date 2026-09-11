@@ -1,0 +1,57 @@
+# The database test against PostgreSQL.
+# Runs only when LIPI_TEST_POSTGRES_URL is set (see cli/tests/postgres.rs).
+url = env.get("LIPI_TEST_POSTGRES_URL")
+if url == null
+    show "Set LIPI_TEST_POSTGRES_URL to run this test."
+    process.exit(2)
+
+db = database.open(url)
+for table in ["users", "products", "orders", "events", "lipi_migrations"]
+    db.run("DROP TABLE IF EXISTS \"{table}\"")
+
+dezy = db.users.create({name: "Dezy", age: 25, active: true, tags: ["admin"]})
+db.users.create({name: "Asha", age: 31, active: false, tags: []})
+db.users.create({name: "Ravi", age: 19, active: true})
+show dezy
+show db.users.count(), db.users.count(active: true)
+show db.users.find(2).name, db.users.find(name: "Ravi").age, db.users.find(99)
+show db.users.where(active: true, order: "-age").map(u => u.name)
+show db.users.all(order: "name", limit: 2).map(u => u.name)
+show db.users.find(1).tags, typeOf(db.users.find(1).active)
+
+updated = db.users.update(2, {active: true, city: "Pune"})
+show updated.active, updated.city
+show db.users.delete(3), db.users.delete(3), db.users.count()
+
+# ? and :name placeholders work on PostgreSQL too
+rows = db.query("SELECT name, age FROM users WHERE age > ? ORDER BY age", [20])
+show rows
+result = db.run("UPDATE users SET age = age + 1 WHERE name = :name", {name: "Dezy"})
+show result.changes, db.users.find(1).age
+
+failingWork(tx)
+    tx.users.create({name: "Temp", age: 1})
+    throw "something failed"
+
+try
+    db.transaction(failingWork)
+catch err
+    show "rolled back:", err.message
+show db.users.count()
+
+show db.migrate("001_products", "CREATE TABLE products (id SERIAL PRIMARY KEY, title TEXT NOT NULL, price NUMERIC(10, 2))")
+show db.migrate("001_products", "CREATE TABLE products (id SERIAL PRIMARY KEY)")
+db.products.create({title: "Tea", price: 2.5})
+show db.products.all(), db.tables()
+
+# PostgreSQL types: timestamps, dates and UUIDs
+db.run("CREATE TABLE events (id SERIAL PRIMARY KEY, at TIMESTAMPTZ, day DATE, uid UUID)")
+db.events.create({at: "2026-09-11T10:30:00Z", day: "2026-09-11", uid: "123e4567-e89b-12d3-a456-426614174000"})
+show db.events.find(1)
+
+show db.orders.all(), db.orders.count(), db.orders.find(1)
+
+try
+    db.query("SELEC nonsense")
+catch err
+    show err.code, err.category

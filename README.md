@@ -118,7 +118,7 @@ async getUser(id)
 use math                           # math.lipi next to this file (export add in it)
 from "./lib/tax.lipi" use gst
 
-db = database.open("shop.db")      # SQLite; tables and columns grow with your data
+db = database.open("shop.db")      # SQLite, or "postgres://user:pw@host/shop"; tables grow with your data
 db.orders.create({item: "tea", qty: 2})
 paid = db.orders.where(status: "paid", order: "-id")
 db.orders.update(order.id, {status: "paid"})
@@ -142,6 +142,7 @@ docs/       language specification
 ```sh
 cargo test                                      # unit, golden, CLI and server tests
 LIPI_BLESS=1 cargo test -p lipi --test golden   # accept new golden output
+LIPI_TEST_POSTGRES_URL=postgres://postgres@localhost:5432/postgres cargo test -p lipi --test postgres
 ```
 
 ## Status
@@ -150,7 +151,7 @@ LIPI_BLESS=1 cargo test -p lipi --test golden   # accept new golden output
 |---|---|---|
 | 0.1 | core executable language | ✅ |
 | 0.2 | usability, type system, modules, errors, JSON, files, HTTP client, async, tests, REPL | ✅ |
-| 0.3 | application APIs: HTTP server, middleware, cookies, WebSockets, auth foundations (crypto), SQLite database layer ✅ · PostgreSQL driver | 🚧 in progress |
+| 0.3 | application APIs: HTTP server, middleware, cookies, WebSockets, auth foundations (crypto), database layer on SQLite and PostgreSQL | ✅ |
 | 0.5 | packages, registry, lipi.lock, formatter, linter, LSP, VS Code | planned |
 | 0.8 | web platform: LiPi UI, JS target, JS interop | planned |
 | 1.0 | stable language and ecosystem | planned |
