@@ -4,11 +4,14 @@
 //! (scripts/build-playground.ps1 does this and makes the playground page).
 //!
 //! The JavaScript side:
-//! 1. `alloc(len)` gives a buffer; copy the UTF-8 source into it.
-//! 2. `compile(ptr, len)` returns a pointer to a result: 4 bytes of length
+//! 1. `lipi_alloc(len)` gives a buffer; copy the UTF-8 source into it.
+//! 2. `lipi_compile(ptr, len)` returns a pointer to a result: 4 bytes of length
 //!    (little-endian), 1 byte of kind (0 = JavaScript, 1 = error text), then
 //!    the text.
-//! 3. `free(ptr, len)` releases a buffer or a result (result length = 5 + text length).
+//! 3. `lipi_free(ptr, len)` releases a buffer or a result (result length = 5 + text length).
+//!
+//! The exports have a `lipi_` prefix: a plain `free` would replace the C
+//! library's on Linux and macOS when this crate is linked into a test program.
 
 use lipi_compiler::codegen::{self, Target};
 
@@ -31,21 +34,21 @@ fn leak(bytes: Vec<u8>) -> *mut u8 {
 }
 
 #[no_mangle]
-pub extern "C" fn alloc(len: usize) -> *mut u8 {
+pub extern "C" fn lipi_alloc(len: usize) -> *mut u8 {
     leak(vec![0u8; len])
 }
 
 /// # Safety
-/// `ptr` and `len` must come from `alloc` or `compile` (for a result, len = 5 + text length).
+/// `ptr` and `len` must come from `lipi_alloc` or `lipi_compile` (for a result, len = 5 + text length).
 #[no_mangle]
-pub unsafe extern "C" fn free(ptr: *mut u8, len: usize) {
+pub unsafe extern "C" fn lipi_free(ptr: *mut u8, len: usize) {
     drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)));
 }
 
 /// # Safety
-/// `ptr` must point to `len` readable bytes (from `alloc`).
+/// `ptr` must point to `len` readable bytes (from `lipi_alloc`).
 #[no_mangle]
-pub unsafe extern "C" fn compile(ptr: *const u8, len: usize) -> *mut u8 {
+pub unsafe extern "C" fn lipi_compile(ptr: *const u8, len: usize) -> *mut u8 {
     let input = std::slice::from_raw_parts(ptr, len);
     let (kind, text) = match std::str::from_utf8(input) {
         Ok(source) => match compile_text(source) {

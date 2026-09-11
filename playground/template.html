@@ -422,14 +422,14 @@ function setStatus(text, kind) {
 let wasm = null;
 function compile(code) {
   const input = new TextEncoder().encode(code);
-  const ptr = wasm.alloc(input.length);
+  const ptr = wasm.lipi_alloc(input.length);
   new Uint8Array(wasm.memory.buffer, ptr, input.length).set(input);
-  const res = wasm.compile(ptr, input.length);
-  wasm.free(ptr, input.length);
+  const res = wasm.lipi_compile(ptr, input.length);
+  wasm.lipi_free(ptr, input.length);
   const len = new DataView(wasm.memory.buffer).getUint32(res, true);
   const kind = new Uint8Array(wasm.memory.buffer)[res + 4];
   const text = new TextDecoder().decode(new Uint8Array(wasm.memory.buffer, res + 5, len).slice());
-  wasm.free(res, len + 5);
+  wasm.lipi_free(res, len + 5);
   return { ok: kind === 0, text };
 }
 
