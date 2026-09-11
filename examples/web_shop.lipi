@@ -1,0 +1,55 @@
+# A small shop page made with LiPi UI.
+# Build it:  lipi build examples/web_shop.lipi
+# Then open dist/index.html in a browser.
+
+products = [
+    {name: "Masala Chai", price: 120},
+    {name: "Filter Coffee", price: 150},
+    {name: "Mango Lassi", price: 90},
+]
+
+state cart = []
+state search = ""
+
+total()
+    return cart.map(p => p.price).sum()
+
+component ProductCard(product)
+    card
+        heading product.name
+        text "₹{product.price}"
+        if product in cart
+            button "In the cart ✓", disabled: true
+        else
+            button "Add to cart"
+                cart.push(product)
+
+component Quantity(label)
+    state count = 1
+    row
+        text "{label}: {count}"
+        button "−", disabled: count == 1
+            count -= 1
+        button "+"
+            count += 1
+
+page "/"
+    heading "LiPi Shop", level: 1
+    field search, placeholder: "Search" with value
+        search = value
+    matching = products.filter(p => p.name.lower().contains(search.lower()))
+    for product in matching
+        ProductCard(product)
+    if matching.isEmpty()
+        text "Nothing matches your search."
+    card
+        heading "Cart"
+        text "{cart.length} items · ₹{total()}"
+        link "Checkout", to: "/checkout"
+
+page "/checkout"
+    heading "Checkout", level: 1
+    for product in cart
+        Quantity(product.name)
+    text "Total before quantities: ₹{total()}"
+    link "Back to the shop", to: "/"

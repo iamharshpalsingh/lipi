@@ -73,6 +73,30 @@ main.lipi:2:9
 Hint: "age" is a String. Convert it to a number or use a numeric value.
 ```
 
+## Web apps with LiPi UI
+
+```lipi
+state cart = []
+
+component ProductCard(product)
+    card
+        heading product.name
+        text "₹{product.price}"
+        button "Add to cart"
+            cart.push(product)
+
+page "/"
+    heading "LiPi Shop", level: 1
+    for product in products
+        ProductCard(product)
+    text "{cart.length} items in the cart"
+```
+
+`lipi build` turns this into `dist/index.html` + `app.js`. Clicking the button
+changes `cart` and the page redraws. See
+[`examples/web_shop.lipi`](examples/web_shop.lipi) and
+[SPEC §15.3](docs/SPEC.md#153-web-ui-lipi-ui).
+
 Every diagnostic has a stable code (see [SPEC §16](docs/SPEC.md#16-diagnostics)),
 the exact location and a hint. LiPi also recognises habits from other
 languages (`print`, `let`, `&&`, `elif`, `import`, `nil`, curly quotes) and
@@ -168,7 +192,7 @@ LIPI_TEST_POSTGRES_URL=postgres://postgres@localhost:5432/postgres cargo test -p
 | 0.2 | usability, type system, modules, errors, JSON, files, HTTP client, async, tests, REPL | ✅ |
 | 0.3 | application APIs: HTTP server, middleware, cookies, WebSockets, auth foundations (crypto), database layer on SQLite and PostgreSQL | ✅ |
 | 0.5 | formatter, linter, packages + lipi.lock + folder registries, language server, VS Code extension ✅ · hosted registry service | ✅ (registry hosting later) |
-| 0.8 | web platform: JS target (`lipi build`, web + Node, LIP6001 browser boundary) ✅ · LiPi UI, JS interop, `lipi dev` | in progress |
+| 0.8 | web platform: JS target (`lipi build`, web + Node, LIP6001 browser boundary) ✅ · LiPi UI (pages, components, state, events) ✅ · JS interop, `lipi dev` | in progress |
 | 1.0 | stable language and ecosystem | planned |
 | 1.x | WASM, native, desktop, Android, iOS | planned |
 

@@ -1235,11 +1235,366 @@ function $aw(v, s) {
 }
 
 /// Run the main module. Modules without top-level `await` run synchronously.
+/// If the program declared pages, the app starts drawing when it finishes.
 function $start(entry) {
   try {
     const r = $use(entry);
-    if (r instanceof Promise) r.catch($uncaught);
+    if (r instanceof Promise) r.then(uiAfterMain, $uncaught);
+    else uiAfterMain();
   } catch (e) {
     $uncaught(e);
   }
 }
+
+// ----- LiPi UI ----------------------------------------------------------------------------
+// Drawing is immediate-mode: a page's block runs from the top on every redraw
+// and each element call adds a node to the element being drawn. The new tree
+// is then patched into the DOM, so text boxes keep their focus and cursor.
+// Redraws happen after every event handler, after state changes, and when an
+// awaited handler finishes.
+
+const $ui = { pages: [], stack: null, instances: new Map(), seen: null, path: [], root: null, old: [], scheduled: false, started: false };
+const BLOCKED_TAGS = new Set(["script", "style", "iframe", "object", "embed", "link", "meta", "base", "frame", "frameset", "template"]);
+const UI_OPTIONS = { heading: ["level"], button: ["disabled"], link: ["to"], image: ["alt"], field: ["placeholder", "type", "disabled"], checkbox: ["disabled"] };
+const UI_CSS = `
+#app { max-width: 60rem; margin: 0 auto; }
+.lipi-card { background: #fff; border: 1px solid #E8E1D6; border-radius: 12px; padding: 1rem 1.25rem; margin: .75rem 0; box-shadow: 0 1px 2px rgba(23,18,14,.06); }
+.lipi-row { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin: .35rem 0; }
+.lipi-column { display: flex; flex-direction: column; gap: .5rem; }
+.lipi-heading { margin: .25em 0 .5em; line-height: 1.2; }
+.lipi-text { margin: .35em 0; line-height: 1.55; }
+.lipi-button { font: inherit; background: #D2452A; color: #fff; border: 0; border-radius: 8px; padding: .45rem 1rem; cursor: pointer; }
+.lipi-button:hover { background: #B83A22; }
+.lipi-button:disabled { opacity: .5; cursor: default; }
+.lipi-button:focus-visible, .lipi-field:focus-visible, .lipi-link:focus-visible { outline: 2px solid #17120E; outline-offset: 2px; }
+.lipi-field { font: inherit; padding: .45rem .65rem; border: 1px solid #CFC6B8; border-radius: 8px; background: #fff; min-width: 14rem; }
+.lipi-link { color: #B83A22; }
+.lipi-image { max-width: 100%; border-radius: 8px; }
+.lipi-checkbox { display: inline-flex; gap: .5rem; align-items: center; cursor: pointer; }
+`;
+
+class Instance {
+  constructor() { this.store = new Map(); }
+  init(name, make) {
+    if (!this.store.has(name)) this.store.set(name, make());
+    return this.store.get(name);
+  }
+  put(name, value) {
+    this.store.set(name, value);
+    $rt.changed();
+  }
+}
+
+/// Entering a component while drawing. Instances are identified by their
+/// position (the Nth ProductCard inside its parent), so state stays with them.
+$ui.enter = (name, s) => {
+  if ($ui.stack === null) $fail("LIP6002", `the component "${name}" can only be used while drawing a page`, s, "Use it inside a `page` block or another component.");
+  const parent = $ui.path[$ui.path.length - 1];
+  const n = parent.counts.get(name) || 0;
+  parent.counts.set(name, n + 1);
+  const key = `${parent.key}/${name}#${n}`;
+  $ui.seen.add(key);
+  let inst = $ui.instances.get(key);
+  if (!inst) { inst = new Instance(); $ui.instances.set(key, inst); }
+  $ui.path.push({ key, counts: new Map() });
+  return inst;
+};
+$ui.leave = () => { $ui.path.pop(); };
+
+function uiCheck(name, s) {
+  if ($ui.stack === null) $fail("LIP6002", `"${name}" can only be used while drawing a page`, s, "Put it inside a `page` block or a `component`.");
+}
+function emit(v) { $ui.stack[$ui.stack.length - 1].push(v); }
+const vnode = (tag, a, k, on, p) => ({ tag, a, k: k || [], on: on || {}, p: p || {} });
+const texts = (values) => (values.length ? [{ t: values.map(display).join(" ") }] : []);
+
+/// A trailing block arrives as the last positional argument.
+function splitBlock(pos) {
+  const last = pos[pos.length - 1];
+  return pos.length && typeof last === "function" ? [pos.slice(0, -1), last] : [pos, null];
+}
+
+function drawInside(block, s) {
+  const list = [];
+  if (!block) return list;
+  $ui.stack.push(list);
+  try { cb(block, [], s); } finally { $ui.stack.pop(); }
+  return list;
+}
+
+/// The attributes every element accepts (class, id, style, title), plus checks for its own options.
+function common(kind, named, s) {
+  const a = { class: "lipi-" + kind };
+  if (!named) return a;
+  const own = UI_OPTIONS[kind] || [];
+  for (const [k, v] of Object.entries(named)) {
+    if (k === "class") a.class += " " + display(v);
+    else if (k === "id" || k === "style" || k === "title") a[k] = display(v);
+    else if (!own.includes(k)) {
+      const all = ["class", "id", "style", "title", ...own];
+      $fail("LIP5008", `${kind} has no option "${k}"`, s, didYouMean(k, all) || `Its options are: ${all.join(", ")}`);
+    }
+  }
+  return a;
+}
+
+function optBool(named, key, s) { return named && named[key] !== undefined ? $bool(named[key], s) : false; }
+
+function uiSafeUrl(url, s, what) {
+  if (/^\s*(javascript|data|vbscript):/i.test(url)) $fail("LIP6003", `${what} can't use "${url.split(":")[0]}:" addresses`, s, "They could run code the page didn't write.");
+}
+
+function installUI() {
+  const def = (name, f) => { $g[name] = nat(name, f); };
+  const container = (kind, tag) => def(kind, (pos, named, s) => {
+    uiCheck(kind, s);
+    const [values, block] = splitBlock(pos);
+    emit(vnode(tag, common(kind, named, s), texts(values).concat(drawInside(block, s))));
+    return null;
+  });
+  container("card", "div");
+  container("row", "div");
+  container("column", "div");
+  container("section", "section");
+  def("heading", (pos, named, s) => {
+    uiCheck("heading", s);
+    const level = named && named.level !== undefined ? named.level : 2;
+    if (!isInt(level) || level < 1 || level > 6) $fail("LIP5008", "a heading's level must be an Integer from 1 to 6", s);
+    const [values, block] = splitBlock(pos);
+    emit(vnode("h" + level, common("heading", named, s), texts(values).concat(drawInside(block, s))));
+    return null;
+  });
+  def("text", (pos, named, s) => {
+    uiCheck("text", s);
+    const [values, block] = splitBlock(pos);
+    emit(vnode("p", common("text", named, s), texts(values).concat(drawInside(block, s))));
+    return null;
+  });
+  def("button", (pos, named, s) => {
+    uiCheck("button", s);
+    const [values, block] = splitBlock(pos);
+    const a = common("button", named, s);
+    a.type = "button";
+    a.disabled = optBool(named, "disabled", s);
+    emit(vnode("button", a, texts(values), block ? { click: block } : {}));
+    return null;
+  });
+  def("link", (pos, named, s) => {
+    uiCheck("link", s);
+    const target = named && named.to !== undefined ? named.to : pos[1];
+    if (typeof target !== "string") $fail("LIP5008", "a link needs to say where it goes", s, 'For example: link "About", to: "/about"');
+    const a = common("link", named, s);
+    if (target.startsWith("/")) a.href = "#" + target;
+    else if (/^(https?:|mailto:|tel:)/i.test(target)) { a.href = target; a.target = "_blank"; a.rel = "noopener noreferrer"; }
+    else $fail("LIP6003", `"${target}" isn't a link LiPi can open safely`, s, 'Link to a page of this app ("/about") or to an address that starts with https://, http://, mailto: or tel:.');
+    emit(vnode("a", a, texts(pos[0] === undefined ? [target] : [pos[0]])));
+    return null;
+  });
+  def("image", (pos, named, s) => {
+    uiCheck("image", s);
+    const src = pos[0];
+    if (typeof src !== "string") wrong("image", "source", "String", src === undefined ? null : src, s);
+    uiSafeUrl(src, s, "images");
+    const a = common("image", named, s);
+    a.src = src;
+    a.alt = named && named.alt !== undefined ? display(named.alt) : "";
+    emit(vnode("img", a));
+    return null;
+  });
+  def("field", (pos, named, s) => {
+    uiCheck("field", s);
+    const [values, block] = splitBlock(pos);
+    const a = common("field", named, s);
+    a.type = named && named.type !== undefined ? display(named.type) : "text";
+    if (named && named.placeholder !== undefined) a.placeholder = display(named.placeholder);
+    a.disabled = optBool(named, "disabled", s);
+    const v = values[0];
+    emit(vnode("input", a, [], block ? { input: block } : {}, { value: v === undefined || v === null ? "" : display(v) }));
+    return null;
+  });
+  def("checkbox", (pos, named, s) => {
+    uiCheck("checkbox", s);
+    const [values, block] = splitBlock(pos);
+    const checked = values[0] === undefined ? false : $bool(values[0], s);
+    const box = vnode("input", { type: "checkbox", disabled: optBool(named, "disabled", s) }, [], block ? { change: block } : {}, { checked });
+    emit(vnode("label", common("checkbox", named, s), [box].concat(texts(values.slice(1)))));
+    return null;
+  });
+  def("element", (pos, named, s) => {
+    uiCheck("element", s);
+    const [values, block] = splitBlock(pos);
+    const tag = values[0];
+    if (typeof tag !== "string" || !/^[a-z][a-z0-9-]*$/.test(tag)) $fail("LIP5008", "element needs a tag name", s, 'For example: element "ul"');
+    if (BLOCKED_TAGS.has(tag)) $fail("LIP6003", `element can't create <${tag}>`, s, "Scripts, styles and embedded pages could run code the page didn't write.");
+    emit(vnode(tag, common("element", named, s), texts(values.slice(1)).concat(drawInside(block, s))));
+    return null;
+  });
+  def("page", (pos, named, s) => {
+    if ($ui.stack !== null) $fail("LIP6002", "`page` declares a page, so it can't be used while drawing one", s, "Put `page` blocks at the top level of the file.");
+    const [path, block] = pos;
+    if (typeof path !== "string" || !path.startsWith("/")) $fail("LIP5008", "a page needs a path that starts with /", s, 'For example: page "/about"');
+    if (typeof block !== "function") $fail("LIP5008", "a page needs an indented block that draws it", s);
+    if ($ui.pages.some((p) => p.path === path)) $fail("LIP5008", `there's already a page for "${path}"`, s);
+    $ui.pages.push({ path, parts: path.split("/").filter((x) => x !== ""), block, s });
+    return null;
+  });
+  def("navigate", (pos, named, s) => {
+    const path = pos[0];
+    if (typeof path !== "string" || !path.startsWith("/")) $fail("LIP5008", "navigate needs the path of a page", s, 'For example: navigate("/cart")');
+    if (typeof location !== "undefined") location.hash = "#" + path;
+    return null;
+  });
+  $rt.changed = () => { if ($ui.started && $ui.stack === null) uiSchedule(); };
+}
+
+function uiDecode(x) { try { return decodeURIComponent(x); } catch { return x; } }
+
+/// The page for the current address (`#/products/7`) and its route object.
+function uiRoute() {
+  const raw = typeof location !== "undefined" ? location.hash.replace(/^#/, "") : "";
+  const q = raw.indexOf("?");
+  let path = q < 0 ? raw : raw.slice(0, q);
+  if (!path.startsWith("/")) path = "/" + path;
+  const parts = path.split("/").filter((x) => x !== "").map(uiDecode);
+  const query = new Map();
+  for (const kv of (q < 0 ? "" : raw.slice(q + 1)).split("&")) {
+    if (!kv) continue;
+    const eqAt = kv.indexOf("=");
+    query.set(uiDecode(eqAt < 0 ? kv : kv.slice(0, eqAt)), uiDecode(eqAt < 0 ? "" : kv.slice(eqAt + 1)));
+  }
+  for (const p of $ui.pages) {
+    const params = new Map();
+    let ok = true;
+    for (let i = 0; i < Math.max(p.parts.length, parts.length); i++) {
+      const want = p.parts[i];
+      if (want === "*") { params.set("rest", parts.slice(i).join("/")); break; }
+      if (want === undefined || parts[i] === undefined) { ok = false; break; }
+      if (want.startsWith(":")) params.set(want.slice(1), parts[i]);
+      else if (want !== parts[i]) { ok = false; break; }
+    }
+    if (ok) return { page: p, path, route: $obj([["path", path], ["params", new LObj(params)], ["query", new LObj(query)]]) };
+  }
+  return { page: null, path };
+}
+
+function uiSchedule() {
+  if ($ui.scheduled) return;
+  $ui.scheduled = true;
+  queueMicrotask(uiRender);
+}
+
+function uiRender() {
+  $ui.scheduled = false;
+  const m = uiRoute();
+  const list = [];
+  $ui.stack = [list];
+  $ui.seen = new Set();
+  $ui.path = [{ key: "", counts: new Map() }];
+  try {
+    if (m.page) {
+      const r = cb(m.page.block, [m.route], m.page.s);
+      if (r instanceof Promise) $fail("LIP4001", "a page draws right away, so its block can't use `await`", m.page.s, "Load data in top-level code or in a button's block, keep it in `state`, and draw it here.");
+    } else {
+      emit(vnode("h1", { class: "lipi-heading" }, [{ t: "Page not found" }]));
+      emit(vnode("p", { class: "lipi-text" }, [{ t: `There's no page for ${m.path}.` }]));
+    }
+  } catch (e) {
+    $ui.stack = null;
+    $uncaught(e);
+    return;
+  }
+  $ui.stack = null;
+  for (const k of Array.from($ui.instances.keys())) if (!$ui.seen.has(k)) $ui.instances.delete(k);
+  patchChildren($ui.root, $ui.old, list);
+  $ui.old = list;
+}
+
+/// Run an event handler, then redraw (again when an async handler finishes).
+function uiFire(el, type) {
+  const h = el.$h && el.$h[type];
+  if (!h) return;
+  const args = type === "input" ? [el.value] : type === "change" ? [el.checked] : [];
+  let r;
+  try {
+    r = cb(h, args, null);
+  } catch (e) {
+    $uncaught(e);
+  }
+  if (r instanceof Promise) r.then(uiSchedule, (e) => { $uncaught(e); uiSchedule(); });
+  uiSchedule();
+}
+
+function uiSetAttr(el, k, v) {
+  if (v === false || v === null || v === undefined) el.removeAttribute(k);
+  else el.setAttribute(k, v === true ? "" : String(v));
+}
+
+function uiListen(el, on) {
+  if (!el.$types) el.$types = new Set();
+  for (const type of Object.keys(on)) {
+    if (el.$types.has(type)) continue;
+    el.$types.add(type);
+    el.addEventListener(type, () => uiFire(el, type));
+  }
+}
+
+function uiCreate(v) {
+  if (v.t !== undefined) return document.createTextNode(v.t);
+  const el = document.createElement(v.tag);
+  for (const [k, x] of Object.entries(v.a)) uiSetAttr(el, k, x);
+  for (const [k, x] of Object.entries(v.p)) el[k] = x;
+  el.$h = v.on;
+  uiListen(el, v.on);
+  for (const c of v.k) el.appendChild(uiCreate(c));
+  return el;
+}
+
+function uiPatch(parent, node, o, n) {
+  if (n.t !== undefined && o.t !== undefined) {
+    if (o.t !== n.t) node.nodeValue = n.t;
+    return;
+  }
+  if (n.t !== undefined || o.t !== undefined || o.tag !== n.tag) {
+    parent.replaceChild(uiCreate(n), node);
+    return;
+  }
+  for (const k of Object.keys(o.a)) if (!(k in n.a)) node.removeAttribute(k);
+  for (const [k, x] of Object.entries(n.a)) if (o.a[k] !== x) uiSetAttr(node, k, x);
+  for (const [k, x] of Object.entries(n.p)) if (node[k] !== x) node[k] = x;
+  node.$h = n.on;
+  uiListen(node, n.on);
+  patchChildren(node, o.k, n.k);
+}
+
+function patchChildren(dom, olds, news) {
+  const nodes = Array.from(dom.childNodes);
+  for (let i = 0; i < news.length; i++) {
+    if (i < olds.length && nodes[i]) uiPatch(dom, nodes[i], olds[i], news[i]);
+    else dom.appendChild(uiCreate(news[i]));
+  }
+  for (let i = nodes.length - 1; i >= news.length; i--) dom.removeChild(nodes[i]);
+}
+
+function uiStart() {
+  $ui.started = true;
+  if (!document.getElementById("lipi-style")) {
+    const style = document.createElement("style");
+    style.id = "lipi-style";
+    style.textContent = UI_CSS;
+    document.head.appendChild(style);
+  }
+  $ui.root = document.getElementById("app");
+  if (!$ui.root) {
+    $ui.root = document.createElement("div");
+    $ui.root.id = "app";
+    document.body.insertBefore($ui.root, document.body.firstChild);
+  }
+  if (typeof window !== "undefined") window.addEventListener("hashchange", uiSchedule);
+  uiRender();
+}
+
+function uiAfterMain() {
+  if ($ui.pages.length && typeof document !== "undefined") uiStart();
+}
+
+installUI();

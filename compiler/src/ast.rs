@@ -47,6 +47,11 @@ pub enum StmtKind {
     Export { names: Vec<Name>, inner: Option<Box<Stmt>> },
     TypeDef(Rc<TypeDecl>),
     Test { name: String, body: Block },
+    /// `component ProductCard(product)` + block: a function that draws part of a page.
+    Component(Rc<FuncDecl>),
+    /// `state count = 0`: a variable whose changes redraw the page. Inside a
+    /// component it belongs to that component instance and survives redraws.
+    State { name: Name, ty: Option<TypeExpr>, value: Expr },
 }
 
 #[derive(Debug, Clone)]

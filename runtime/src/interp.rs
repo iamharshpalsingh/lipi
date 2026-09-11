@@ -330,7 +330,7 @@ impl Interpreter {
                 _ => stmt,
             };
             match &stmt.kind {
-                StmtKind::Func(f) => env.define(&f.name.text, self.closure(f, env)),
+                StmtKind::Func(f) | StmtKind::Component(f) => env.define(&f.name.text, self.closure(f, env)),
                 StmtKind::TypeDef(t) => env.define(&t.name.text, Value::Type(Rc::new(TypeInfo { decl: t.clone(), env: env.clone(), file: self.file.clone() }))),
                 _ => {}
             }
@@ -428,7 +428,14 @@ impl Interpreter {
                 }
             }
             StmtKind::For { first, second, iter, body } => self.exec_for(first, second.as_ref(), iter, body, env)?,
-            StmtKind::Func(f) => env.define(&f.name.text, self.closure(f, env)),
+            StmtKind::Func(f) | StmtKind::Component(f) => env.define(&f.name.text, self.closure(f, env)),
+            StmtKind::State { name, ty, value } => {
+                let v = self.eval(value, env)?;
+                if let Some(t) = ty {
+                    self.check_declared(&v, t, &name.text, value.span)?;
+                }
+                env.vars.borrow_mut().insert(name.text.clone(), Slot { value: v, constant: false, declared: ty.clone() });
+            }
             StmtKind::Return(value) => {
                 let v = match value {
                     Some(e) => self.eval(e, env)?,

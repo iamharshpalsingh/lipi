@@ -297,6 +297,21 @@ pub fn install(g: &Rc<Env>) {
     for (name, route) in crate::server::route_globals() {
         def(name, route);
     }
+    // LiPi UI elements exist so programs check the same way everywhere, but
+    // drawing needs a browser: `lipi build` compiles them for the web.
+    for &name in lipi_compiler::codegen::UI_ELEMENTS {
+        def(
+            name,
+            Value::native(name, move |it, a| {
+                Err(it.err(
+                    "LIP6002",
+                    format!("\"{name}\" draws web pages, so it needs a browser"),
+                    a.span,
+                    Some("Build this program with `lipi build` and open dist/index.html in a browser.".into()),
+                ))
+            }),
+        );
+    }
 }
 
 fn math_module() -> Value {

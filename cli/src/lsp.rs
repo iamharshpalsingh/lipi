@@ -28,6 +28,20 @@ const DOCS: &[(&str, &str, &str)] = &[
     ("sleep", "sleep(milliseconds) -> Task", "Waits in the background. Use with await."),
     ("all", "all(tasks) -> Array", "Waits for every task and returns their results in order."),
     ("timeout", "timeout(task, milliseconds)", "Waits for a task but fails with LIP4002 if it takes too long."),
+    ("page", "page \"/path\" with route", "Declares a page of a web app (lipi build). The block draws it; route.params holds :parts of the path."),
+    ("card", "card + block", "A boxed group of elements. The block draws what's inside."),
+    ("row", "row + block", "Places the elements drawn in the block side by side."),
+    ("column", "column + block", "Stacks the elements drawn in the block."),
+    ("section", "section + block", "A section of a page."),
+    ("heading", "heading value, level: 2", "A heading (levels 1 to 6)."),
+    ("text", "text value, ...", "A paragraph of text."),
+    ("button", "button label, disabled: false + block", "A button. The block runs when it's clicked."),
+    ("link", "link label, to: \"/page\"", "A link to a page of this app, or to an https:// address."),
+    ("image", "image source, alt: \"description\"", "An image."),
+    ("field", "field value, placeholder: \"...\" with value", "A text box. The block runs with the new text on every change."),
+    ("checkbox", "checkbox checked, label with checked", "A checkbox. The block runs with true or false when it changes."),
+    ("element", "element \"tag\", ... + block", "Any other HTML element (scripts and styles aren't allowed)."),
+    ("navigate", "navigate(\"/path\")", "Goes to another page of the app."),
     ("get", "get \"/path\" with request", "Declares a GET route for the web server."),
     ("post", "post \"/path\" with request", "Declares a POST route for the web server."),
     ("put", "put \"/path\" with request", "Declares a PUT route."),
@@ -569,7 +583,8 @@ impl Server {
                 json!({"name": name, "kind": kind, "range": range(&text, full), "selectionRange": range(&text, sel), "children": children})
             };
             match &stmt.kind {
-                StmtKind::Func(f) => out.push(symbol(&f.name.text, 12, Span { end: block_end(&f.body).max(f.name.span.end), ..f.name.span }, f.name.span, vec![])),
+                StmtKind::Func(f) | StmtKind::Component(f) => out.push(symbol(&f.name.text, 12, Span { end: block_end(&f.body).max(f.name.span.end), ..f.name.span }, f.name.span, vec![])),
+                StmtKind::State { name, .. } if seen.insert(name.text.clone()) => out.push(symbol(&name.text, 13, stmt.span, name.span, vec![])),
                 StmtKind::TypeDef(t) => {
                     let mut children: Vec<Json> = t.fields.iter().map(|f| symbol(&f.name.text, 8, f.name.span, f.name.span, vec![])).collect();
                     let mut end = t.name.span.end;
@@ -608,7 +623,7 @@ fn stmt_end(stmt: &Stmt) -> usize {
     let nested = match &stmt.kind {
         StmtKind::If { branches, otherwise } => branches.iter().map(|(_, b)| block_end(b)).chain(otherwise.iter().map(block_end)).max().unwrap_or(0),
         StmtKind::While { body, .. } | StmtKind::Repeat { body, .. } | StmtKind::For { body, .. } | StmtKind::Test { body, .. } => block_end(body),
-        StmtKind::Func(f) => block_end(&f.body),
+        StmtKind::Func(f) | StmtKind::Component(f) => block_end(&f.body),
         StmtKind::Try { body, catch, finally } => [Some(block_end(body)), catch.as_ref().map(|(_, b)| block_end(b)), finally.as_ref().map(block_end)].into_iter().flatten().max().unwrap_or(0),
         StmtKind::Match { arms, otherwise, .. } => arms.iter().map(|a| block_end(&a.body)).chain(otherwise.iter().map(block_end)).max().unwrap_or(0),
         StmtKind::Export { inner: Some(s), .. } => stmt_end(s),
@@ -650,9 +665,13 @@ fn definitions(program: &Program) -> HashMap<String, (Span, u8)> {
                 expr(value, out);
             }
             StmtKind::Assign { value, .. } | StmtKind::Expr(value) => expr(value, out),
-            StmtKind::Func(f) => {
+            StmtKind::Func(f) | StmtKind::Component(f) => {
                 add(out, &f.name, 3);
                 func(f, out);
+            }
+            StmtKind::State { name, value, .. } => {
+                add(out, name, 6);
+                expr(value, out);
             }
             StmtKind::TypeDef(t) => {
                 add(out, &t.name, 7);

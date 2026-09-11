@@ -521,6 +521,7 @@ fn web_page(title: &str) -> String {
 </style>
 </head>
 <body>
+<div id="app"></div>
 <pre id="lipi-output" hidden></pre>
 <script src="app.js"></script>
 </body>

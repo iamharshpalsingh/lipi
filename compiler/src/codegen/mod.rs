@@ -45,6 +45,10 @@ impl Target {
 const STD_MODULES: &[&str] = &["math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database"];
 /// Global functions the JavaScript runtime provides.
 const JS_GLOBALS: &[&str] = &["toNumber", "toInteger", "toDecimal", "toString", "typeOf", "assert", "assertEqual", "sleep", "all", "timeout"];
+/// LiPi UI: pages and elements (web builds only).
+pub const UI_ELEMENTS: &[&str] = &[
+    "page", "card", "row", "column", "section", "heading", "text", "button", "link", "image", "field", "checkbox", "element", "navigate",
+];
 
 fn js_module_available(name: &str, target: Target) -> bool {
     match target {
@@ -134,6 +138,10 @@ struct Scope {
     module: bool,
     js_async: bool,
     temps: Vec<String>,
+    /// `state` variables: assigning one redraws the page.
+    states: HashSet<String>,
+    /// In a component: the JavaScript variable holding its instance (where its state lives).
+    inst: Option<String>,
 }
 
 #[derive(Default)]
@@ -219,6 +227,8 @@ struct Names {
     assigned: Vec<String>,
     /// Functions and types at the top of the body (defined before it runs).
     hoisted: Vec<String>,
+    /// `state` variables.
+    states: Vec<String>,
 }
 
 fn collect_block(body: &[Stmt], n: &mut Names, top: bool) {
@@ -252,11 +262,15 @@ fn collect_stmt(stmt: &Stmt, n: &mut Names, top: bool) {
             }
             collect_block(body, n, false);
         }
-        StmtKind::Func(f) => {
+        StmtKind::Func(f) | StmtKind::Component(f) => {
             n.defined.push((f.name.text.clone(), None));
             if top {
                 n.hoisted.push(f.name.text.clone());
             }
+        }
+        StmtKind::State { name, ty, .. } => {
+            n.defined.push((name.text.clone(), ty.clone()));
+            n.states.push(name.text.clone());
         }
         StmtKind::TypeDef(t) => {
             n.defined.push((t.name.text.clone(), None));
@@ -486,6 +500,7 @@ impl Gen<'_> {
         for name in names.hoisted {
             s.no_check.insert(name);
         }
+        s.states.extend(names.states);
         for name in names.assigned {
             if !s.locals.contains(&name) && !self.visible(&name) {
                 s.locals.insert(name);
@@ -540,7 +555,25 @@ impl Gen<'_> {
         self.site(span, &extra)
     }
 
+    /// After assigning a `state` variable: the statement that tells the page to redraw.
+    fn state_notify(&self, name: &str) -> Option<String> {
+        let scope = self.st.scopes.iter().rev().find(|s| s.locals.contains(name))?;
+        if !scope.states.contains(name) {
+            return None;
+        }
+        Some(match &scope.inst {
+            Some(i) => format!("{i}.put({}, {});", js_str(name), var(name)),
+            None => "$rt.changed();".to_string(),
+        })
+    }
+
     fn global(&mut self, name: &str, span: Span) -> R<String> {
+        if UI_ELEMENTS.contains(&name) {
+            return match self.target {
+                Target::Web => Ok(format!("$g.{name}")),
+                Target::Node => Err(self.unavailable(name, span).into()),
+            };
+        }
         if JS_GLOBALS.contains(&name) || (STD_MODULES.contains(&name) && js_module_available(name, self.target)) {
             return Ok(format!("$g.{name}"));
         }
@@ -553,6 +586,9 @@ impl Gen<'_> {
                 "Browser code can't reach files, environment variables, databases or the server, so secrets stay on the server. \
                  Do this in server code (lipi run) and fetch the result with http.",
             ),
+            Target::Node if UI_ELEMENTS.contains(&name) => Diagnostic::error(format!("\"{name}\" draws web pages, so it only works in web builds"), span)
+                .with_code("LIP3006")
+                .with_hint("Build without --target node; the web target is the default."),
             Target::Node => Diagnostic::error(format!("\"{name}\" isn't available in JavaScript builds yet"), span)
                 .with_code("LIP3006")
                 .with_hint("Run this program with `lipi run` instead."),
@@ -636,9 +672,9 @@ impl Gen<'_> {
                 _ => stmt,
             };
             match &stmt.kind {
-                StmtKind::Func(f) => {
+                StmtKind::Func(f) | StmtKind::Component(f) => {
                     self.st.hoisted.insert(Rc::as_ptr(f) as usize);
-                    let js = self.func(f, false)?;
+                    let js = self.func(f, false, matches!(stmt.kind, StmtKind::Component(_)))?;
                     self.line(out, &format!("{} = {js};", var(&f.name.text)));
                 }
                 StmtKind::TypeDef(t) => {
@@ -701,10 +737,23 @@ impl Gen<'_> {
                 self.line(out, "}");
             }
             StmtKind::For { first, second, iter, body } => self.for_loop(first, second.as_ref(), iter, body, out)?,
-            StmtKind::Func(f) => {
+            StmtKind::Func(f) | StmtKind::Component(f) => {
                 if !self.st.hoisted.contains(&(Rc::as_ptr(f) as usize)) {
-                    let js = self.func(f, false)?;
+                    let js = self.func(f, false, matches!(stmt.kind, StmtKind::Component(_)))?;
                     self.line(out, &format!("{} = {js};", var(&f.name.text)));
+                }
+            }
+            StmtKind::State { name, ty, value } => {
+                let mut v = self.expr(value)?;
+                if let Some(t) = ty {
+                    let s = self.site(value.span, "");
+                    v = format!("$chk({v}, {}, {}, {s})", type_js(t), js_str(&name.text));
+                }
+                let target = var(&name.text);
+                match self.scope().inst.clone() {
+                    // Component state: created on the first draw, then kept.
+                    Some(i) => self.line(out, &format!("{target} = {i}.init({}, () => {v});", js_str(&name.text))),
+                    None => self.line(out, &format!("{target} = {v};")),
                 }
             }
             StmtKind::TypeDef(t) => {
@@ -872,6 +921,9 @@ impl Gen<'_> {
                     v = format!("$chk({v}, {}, {}, {s})", type_js(&t), js_str(&n.text));
                 }
                 self.line(out, &format!("{} = {v};", var(&n.text)));
+                if let Some(notify) = self.state_notify(&n.text) {
+                    self.line(out, &notify);
+                }
             }
             Target_::Field(obj, name) => {
                 let o = self.expr(obj)?;
@@ -995,9 +1047,22 @@ impl Gen<'_> {
 
     // ----- functions and types -----------------------------------------------------------
 
-    fn func(&mut self, f: &FuncDecl, method: bool) -> R<String> {
+    fn func(&mut self, f: &FuncDecl, method: bool, component: bool) -> R<String> {
         let js_async = f.is_async || (f.is_lambda && block_awaits(&f.body));
-        let scope = self.new_scope(&f.body, &f.params, method, false, js_async);
+        if component && (f.is_async || block_awaits(&f.body)) {
+            return Err(Diagnostic::error("components draw right away, so they can't use `await`", f.name.span)
+                .with_code("LIP4001")
+                .with_hint("Load data in top-level code or in a button's block, keep it in `state`, and draw it here.")
+                .into());
+        }
+        let mut scope = self.new_scope(&f.body, &f.params, method, false, js_async);
+        let inst = if component {
+            let i = self.fresh("$inst");
+            scope.inst = Some(i.clone());
+            Some(i)
+        } else {
+            None
+        };
         let saved_hoisted = std::mem::take(&mut self.st.hoisted);
         self.st.scopes.push(scope);
         self.st.ind += 1;
@@ -1037,7 +1102,17 @@ impl Gen<'_> {
         js_params.extend(f.params.iter().map(|p| var(&p.name.text)));
         let mut code = format!("$fn({meta}, {}({}) => {{\n", if js_async { "async " } else { "" }, js_params.join(", "));
         code.push_str(&self.prologue(&scope, self.st.ind + 1));
-        code.push_str(&body);
+        let pad = "  ".repeat(self.st.ind + 1);
+        match inst {
+            // A component draws inside its own instance, which keeps its state between draws.
+            Some(i) => {
+                let s = self.site(f.name.span, "");
+                code.push_str(&format!("{pad}const {i} = $ui.enter({}, {s});\n{pad}try {{\n", js_str(&f.name.text)));
+                code.push_str(&body);
+                code.push_str(&format!("{pad}}} finally {{\n{pad}  $ui.leave();\n{pad}}}\n"));
+            }
+            None => code.push_str(&body),
+        }
         code.push_str(&"  ".repeat(self.st.ind));
         code.push_str("})");
         Ok(code)
@@ -1055,7 +1130,7 @@ impl Gen<'_> {
         }
         let mut methods = Vec::new();
         for m in &t.methods {
-            methods.push(format!("{}: {}", js_str(&m.name.text), self.func(m, true)?));
+            methods.push(format!("{}: {}", js_str(&m.name.text), self.func(m, true, false)?));
         }
         Ok(format!("$type({}, [{}], {{{}}})", js_str(&t.name.text), fields.join(", "), methods.join(", ")))
     }
@@ -1197,7 +1272,7 @@ impl Gen<'_> {
                 let s = self.site(index.span, &format!("{extra}{}", Self::obj_hint(object)));
                 format!("$idx({o}, {i}, {s})")
             }
-            ExprKind::Lambda(f) => self.func(f, false)?,
+            ExprKind::Lambda(f) => self.func(f, false, false)?,
             ExprKind::Await(inner) => {
                 let v = self.expr(inner)?;
                 let s = self.site(e.span, "");

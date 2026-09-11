@@ -66,8 +66,9 @@ fn collect(body: &Block, out: &mut Vec<Declared>) {
 fn collect_stmt(stmt: &Stmt, out: &mut Vec<Declared>) {
     match &stmt.kind {
         StmtKind::Assign { target: Target::Name(n), op: None, .. } => out.push((n.text.clone(), n.span, Kind::Variable)),
-        StmtKind::Func(f) => out.push((f.name.text.clone(), f.name.span, Kind::Definition)),
+        StmtKind::Func(f) | StmtKind::Component(f) => out.push((f.name.text.clone(), f.name.span, Kind::Definition)),
         StmtKind::TypeDef(t) => out.push((t.name.text.clone(), t.name.span, Kind::Definition)),
+        StmtKind::State { name, .. } => out.push((name.text.clone(), name.span, Kind::Variable)),
         StmtKind::Use { source, alias, names } => match names {
             Some(names) => names.iter().for_each(|n| out.push((n.text.clone(), n.span, Kind::Import))),
             None => {
@@ -261,7 +262,8 @@ impl Linter {
                 }
                 self.block(body);
             }
-            StmtKind::Func(f) => self.function(f, false),
+            StmtKind::Func(f) | StmtKind::Component(f) => self.function(f, false),
+            StmtKind::State { value, .. } => self.expr(value),
             StmtKind::Return(v) => {
                 if let Some(v) = v {
                     self.expr(v);

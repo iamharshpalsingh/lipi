@@ -332,6 +332,23 @@ impl<'a> Parser<'a> {
                 if name == "test" && matches!(self.peek_at(1), Tok::Str(_)) {
                     return self.parse_test();
                 }
+                if name == "component" && matches!(self.peek_at(1), Tok::Ident(_)) && matches!(self.peek_at(2), Tok::LParen) {
+                    self.advance();
+                    match self.try_func_def(false, true)? {
+                        Some(f) => return Ok(Stmt { kind: StmtKind::Component(f), span: start }),
+                        None => unreachable!("explicit definitions report their own errors"),
+                    }
+                }
+                if name == "state" && matches!(self.peek_at(1), Tok::Ident(_)) && matches!(self.peek_at(2), Tok::Assign | Tok::Colon) {
+                    self.advance();
+                    let name = self.binding("a name for the state")?;
+                    let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
+                    self.expect(&Tok::Assign, "'=' and a starting value, like: state count = 0")?;
+                    let value = self.parse_expression()?;
+                    let s = self.stmt(StmtKind::State { name, ty, value }, start);
+                    self.end_statement()?;
+                    return Ok(s);
+                }
                 if matches!(self.peek_at(1), Tok::LParen) {
                     if let Some(f) = self.try_func_def(false, false)? {
                         return Ok(Stmt { kind: StmtKind::Func(f), span: start });
@@ -642,8 +659,9 @@ impl<'a> Parser<'a> {
         }
         let inner = self.parse_statement()?;
         let name = match &inner.kind {
-            StmtKind::Func(f) => f.name.clone(),
+            StmtKind::Func(f) | StmtKind::Component(f) => f.name.clone(),
             StmtKind::TypeDef(t) => t.name.clone(),
+            StmtKind::State { name, .. } => name.clone(),
             StmtKind::Assign { target: Target::Name(n), op: None, .. } => n.clone(),
             _ => {
                 return Err(Diagnostic::error("`export` needs a name or a definition", start)

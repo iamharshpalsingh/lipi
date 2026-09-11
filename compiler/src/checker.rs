@@ -344,7 +344,11 @@ impl Checker {
             StmtKind::Assign { value, .. } | StmtKind::Expr(value) | StmtKind::Throw(value) => self.survey_expr(value),
             StmtKind::Show(values) => values.iter().for_each(|v| self.survey_expr(v)),
             StmtKind::Return(Some(v)) => self.survey_expr(v),
-            StmtKind::Func(f) => {
+            StmtKind::State { name, value, .. } => {
+                self.global_types.entry(name.text.clone()).or_default().push(None);
+                self.survey_expr(value);
+            }
+            StmtKind::Func(f) | StmtKind::Component(f) => {
                 *self.def_counts.entry(f.name.text.clone()).or_default() += 1;
                 self.global_types.entry(f.name.text.clone()).or_default().push(Some(Ty::Function));
                 self.mark_params(&f.params);
@@ -552,7 +556,8 @@ impl Checker {
                 }
                 self.loop_body(body);
             }
-            StmtKind::Func(f) => self.function(f, None),
+            StmtKind::Func(f) | StmtKind::Component(f) => self.function(f, None),
+            StmtKind::State { name, ty, value } => self.assign(&Target::Name(name.clone()), None, ty.as_ref(), value, false, stmt.span),
             StmtKind::Return(value) => {
                 if self.fn_depth == 0 {
                     self.err(Diagnostic::error("`return` can only be used inside a function", stmt.span).with_code("LIP1006"));
@@ -1054,7 +1059,8 @@ fn collect_stmt(stmt: &Stmt, out: &mut Vec<Collected>, depth: usize) {
             sig: None,
             def_span: if *constant { top(n.span) } else { None },
         }),
-        StmtKind::Func(f) => {
+        StmtKind::State { name, ty, .. } => out.push(Collected { name: name.text.clone(), ty: ty.clone(), constant: false, sig: None, def_span: None }),
+        StmtKind::Func(f) | StmtKind::Component(f) => {
             let sig = Sig { name: f.name.text.clone(), params: f.params.iter().map(|p| (p.name.text.clone(), param_ty(p), p.default.is_some())).collect() };
             out.push(Collected { name: f.name.text.clone(), ty: None, constant: false, sig: Some(sig), def_span: top(f.name.span) });
         }

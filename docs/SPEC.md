@@ -465,6 +465,75 @@ db.tables()
 - Database errors are LIP5011 and carry hints (missing table, unique
   violation, SQL syntax).
 
+### 15.3 Web UI (LiPi UI)
+
+Web apps are written in LiPi and compiled with `lipi build`:
+
+```lipi
+state cart = []                     # app-wide state
+
+component ProductCard(product)
+    card
+        heading product.name
+        text "₹{product.price}"
+        button "Add to cart"        # the block runs on click
+            cart.push(product)
+
+component Quantity(label)
+    state count = 1                 # belongs to this Quantity, kept between draws
+    row
+        text "{label}: {count}"
+        button "+"
+            count += 1
+
+page "/"
+    heading "Shop", level: 1
+    for product in products
+        ProductCard(product)
+    link "Checkout", to: "/checkout"
+
+page "/orders/:id" with route       # route.params.id, route.query
+    heading "Order {route.params.id}"
+```
+
+- **Pages:** `page "/path"` + block, declared at the top level. Paths can
+  have `:name` parts and a final `*` (in `route.params.rest`). Addresses use
+  the `#/path` form, so a build works when opened straight from disk.
+  `navigate("/path")` changes page from code.
+- **Drawing:** a page's block runs from the top on every redraw. Each element
+  call adds to the element being drawn, so `if`, `for` and function calls
+  work as usual. Components are functions that draw; calling them outside
+  a page is error LIP6002.
+- **Redraws** happen after every event handler (again when an async handler
+  finishes), when a `state` variable is assigned, and when an Array or Object
+  is changed in place (`cart.push(x)`). Only what changed is updated in the
+  page, so a text field keeps its cursor while you type.
+- **State:** `state x = value` at the top level is app-wide. Inside a
+  component it belongs to that component instance: it's created on the
+  first draw and kept while the component stays in the same place. Components
+  can't use `await`; load data in top-level code or a button's block and
+  keep it in state.
+- **Elements:**
+
+  | Element | Meaning |
+  |---|---|
+  | `card`, `row`, `column`, `section` + block | containers (the block draws the contents) |
+  | `heading value, level: 2` | heading, levels 1–6 |
+  | `text value, …` | paragraph |
+  | `button label, disabled: false` + block | the block runs on click |
+  | `field value, placeholder: "…", type: "text"` `with value` + block | text box; the block gets the new text |
+  | `checkbox checked, label` `with checked` + block | the block gets true or false |
+  | `link label, to: "/page"` | app page, or an `https:`/`http:`/`mailto:`/`tel:` address (opens in a new tab) |
+  | `image source, alt: "…"` | image |
+  | `element "tag", …` + block | any other element except script/style/embeds (LIP6003) |
+
+  Every element also takes `class:`, `id:`, `style:` and `title:`. Text is
+  always inserted as text, never as HTML, and `javascript:` addresses are
+  refused (LIP6003). LiPi's built-in stylesheet gives every element a
+  default look.
+- `lipi run` on a UI program stops at the first element with LIP6002 and
+  explains how to build it. Node builds refuse UI elements (LIP3006).
+
 ## 16. Diagnostics
 
 Every diagnostic has a stable code, a plain-language message, the exact
@@ -490,7 +559,7 @@ Hint: did you mean "user"?
 | LIP3xxx | Module | 3001 module not found · 3002 circular use · 3003 not exported · 3004 ambiguous module · 3005 invalid export · 3006 not available in JavaScript builds yet |
 | LIP4xxx | Async | 4001 await outside async context · 4002 timed out · 4003 cancelled · 4004 background task failed |
 | LIP5xxx | Runtime | 5000 general · 5001 index out of range · 5002 division by zero · 5003 null access · 5004 missing field · 5005 recursion limit · 5006 thrown by the program · 5007 file/IO · 5008 invalid argument · 5009 Integer overflow · 5010 assertion failed · 5011 database |
-| LIP6xxx | Security | 6001 server-only code in a browser build |
+| LIP6xxx | Security and platform | 6001 server-only code in a browser build · 6002 UI outside a browser page · 6003 unsafe link, address or element |
 | LIP7xxx | Package | reserved |
 
 Lint warnings (from `lipi lint`) use LIP9xxx: 9001 unused variable ·
@@ -645,5 +714,5 @@ primary     = INTEGER | DECIMAL | STRING | "true" | "false" | "null" | IDENT
 
 ## 20. Not yet implemented
 
-The hosted LiPi Registry service, UI components and `state`, JavaScript interop, `lipi dev`,
+The hosted LiPi Registry service, JavaScript interop, `lipi dev`, forms and validation helpers, keyed component identity,
 the debugger, regex and encoding modules, permission-aware I/O, and generics/traits.
