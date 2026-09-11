@@ -114,7 +114,30 @@ type Student
 
 s = Student("Asha", 95)
 show s.naam, s.grade()
+
+type Topper extends Student      # Student ki sab cheezein + apni
+    grade()
+        return "A+ ({super.grade()})"
 ```
+
+## JavaScript jaise features
+
+```lipi
+student = {naam: "Asha", marks: 95, city: "Pune"}
+{naam, marks, ...baaki} = student     # object se nikaalo
+[a, b, ...rest] = [1, 2, 3, 4]        # array se nikaalo
+sab = [...rest, 5]                    # spread
+naya = {...student, marks: 99}
+
+jod(...nums)                          # kitne bhi arguments
+    return nums.sum()
+
+show jod(1, 2, 3), 2.5.toFixed(1), naya.marks
+show regex.findAll('\d+', "a1 b22").map(m => m.text)
+show encoding.base64Encode("hi"), [3, 1, 2].sort((x, y) => y - x)
+```
+
+`time.after(ms)` / `time.every(ms)` + block = setTimeout / setInterval
 
 ## Web app (LiPi UI)
 

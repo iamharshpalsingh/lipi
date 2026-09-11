@@ -31,6 +31,8 @@ pub struct Closure {
     pub file: Rc<str>,
     /// The instance a method is bound to (available as `self`).
     pub this: Option<Value>,
+    /// For a method: the type that declares it (its parent is what `super` reaches).
+    pub owner: Option<Rc<TypeInfo>>,
     /// The names of the function's variable slots.
     pub layout: Names,
 }

@@ -379,7 +379,7 @@ show "Namaste, {nmae}!"
 ` },
 ];
 
-const KW = new Set("if else for in while repeat break continue return and or not true false null const use from as export function async await try catch finally throw match show type test component state with to step".split(" "));
+const KW = new Set("if else for in while repeat break continue return and or not true false null const use from as export function async await try catch finally throw match show type extends super self test component state with to step".split(" "));
 const UI = new Set("page card row column section heading text button link image field checkbox element navigate".split(" "));
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 function highlight(src) {
@@ -435,7 +435,8 @@ function compile(code) {
 
 const PAGE_CSS = 'body{margin:0;padding:22px 24px;font:16px/1.55 Mukta,"Segoe UI",system-ui,sans-serif;color:#17120E;background:#FBF8F3}#lipi-output{font:14.5px/1.65 "JetBrains Mono",Consolas,monospace;white-space:pre-wrap;margin:0}#app:not(:empty)+#lipi-output{margin-top:18px;padding-top:14px;border-top:1px solid #E3DACD}.lipi-error{font:14px/1.55 "JetBrains Mono",Consolas,monospace;white-space:pre-wrap;color:#8A1C0C;background:#FDECE8;border-radius:10px;padding:14px 16px;margin:12px 0}';
 function pageFor(js) {
-  const safe = js.replace(/<\//g, "<\\/");
+  // Only "</script" could end the inline script early; "<\/" means the same in JavaScript.
+  const safe = js.replace(/<\/(script)/gi, "<\\/$1");
   return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mukta:wght@400;600;700&family=JetBrains+Mono&display=swap">' +
     "<style>" + PAGE_CSS + '</style></head><body><div id="app"></div><pre id="lipi-output" hidden></pre><script>' + safe + "<\/script></body></html>";

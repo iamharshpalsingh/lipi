@@ -71,10 +71,14 @@ impl<'a> Resolver<'a> {
         self.scopes.pop();
     }
 
-    fn function(&mut self, key: usize, params: &[Param], method: bool, body: &[Stmt]) {
+    /// `method`: a type's method, which sees `self` (and `super` when the type extends another).
+    fn function(&mut self, key: usize, params: &[Param], method: Option<bool>, body: &[Stmt]) {
         let mut s = Scope::new(Names::default());
-        if method {
+        if let Some(has_parent) = method {
             s.add("self");
+            if has_parent {
+                s.add("super");
+            }
         }
         for p in params {
             s.add(&p.name.text);
@@ -140,6 +144,7 @@ impl<'a> Resolver<'a> {
                         self.expr(obj);
                         self.expr(index);
                     }
+                    Target::Pattern(p) => p.names().into_iter().for_each(|n| self.name(n)),
                 }
             }
             StmtKind::If { branches, otherwise } => {
@@ -159,27 +164,33 @@ impl<'a> Resolver<'a> {
                 self.expr(count);
                 self.block(body);
             }
-            StmtKind::For { first, second, iter, body } => {
+            StmtKind::For { first, second, iter, body, pattern } => {
                 self.expr(iter);
                 self.name(first);
                 if let Some(s) = second {
                     self.name(s);
                 }
+                if let Some(p) = pattern {
+                    p.names().into_iter().for_each(|n| self.name(n));
+                }
                 self.block(body);
             }
             StmtKind::Func(f) | StmtKind::Component(f) => {
                 self.name(&f.name);
-                self.function(Rc::as_ptr(f) as usize, &f.params, false, &f.body);
+                self.function(Rc::as_ptr(f) as usize, &f.params, None, &f.body);
             }
             StmtKind::TypeDef(t) => {
                 self.name(&t.name);
+                if let Some(p) = &t.parent {
+                    self.name(p);
+                }
                 for f in &t.fields {
                     if let Some(d) = &f.default {
                         self.expr(d);
                     }
                 }
                 for m in &t.methods {
-                    self.function(Rc::as_ptr(m) as usize, &m.params, true, &m.body);
+                    self.function(Rc::as_ptr(m) as usize, &m.params, Some(t.parent.is_some()), &m.body);
                 }
             }
             StmtKind::State { name, value, .. } => {
@@ -224,7 +235,7 @@ impl<'a> Resolver<'a> {
                 }
             }
             StmtKind::Export { inner: Some(inner), .. } => self.stmt(inner),
-            StmtKind::Test { body, .. } => self.function(body.as_ptr() as usize, &[], false, body),
+            StmtKind::Test { body, .. } => self.function(body.as_ptr() as usize, &[], None, body),
             _ => {}
         }
     }
@@ -241,7 +252,7 @@ impl<'a> Resolver<'a> {
             }
             ExprKind::List(items) => items.iter().for_each(|x| self.expr(x)),
             ExprKind::Object(fields) => fields.iter().for_each(|(_, v)| self.expr(v)),
-            ExprKind::Unary(_, x) | ExprKind::Await(x) => self.expr(x),
+            ExprKind::Unary(_, x) | ExprKind::Await(x) | ExprKind::Spread(x) => self.expr(x),
             ExprKind::Binary(_, a, b) | ExprKind::And(a, b) | ExprKind::Or(a, b) | ExprKind::Coalesce(a, b) => {
                 self.expr(a);
                 self.expr(b);
@@ -267,7 +278,7 @@ impl<'a> Resolver<'a> {
                 self.expr(object);
                 self.expr(index);
             }
-            ExprKind::Lambda(f) => self.function(Rc::as_ptr(f) as usize, &f.params, false, &f.body),
+            ExprKind::Lambda(f) => self.function(Rc::as_ptr(f) as usize, &f.params, None, &f.body),
             _ => {}
         }
     }

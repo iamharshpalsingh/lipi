@@ -232,7 +232,8 @@ LIPI_TEST_POSTGRES_URL=postgres://postgres@localhost:5432/postgres cargo test -p
 | 0.5 | formatter, linter, packages + lipi.lock + folder registries, language server, VS Code extension ✅ · hosted registry service | ✅ (registry hosting later) |
 | 0.8 | web platform: JS target (`lipi build`, web + Node, LIP6001 browser boundary), LiPi UI (pages, components, state, events), JS interop (`js`), `lipi dev` with live reload | ✅ |
 | 1.0 | stable language: frozen grammar + [stability promise](docs/STABILITY.md), conformance suite, faster interpreter, installers, getting-started guide | ✅ |
-| 1.x | online playground ✅ · debugger, docs site, hosted package registry | in progress |
+| 1.2 | JavaScript's everyday features (spread/rest, patterns, `extends`/`super`, regex, encoding, timers, more methods) in both engines; online playground | ✅ |
+| 1.x | debugger, docs site, hosted package registry | next |
 | 2.x | WASM, native, desktop, Android, iOS | planned |
 
 ### Known limitations

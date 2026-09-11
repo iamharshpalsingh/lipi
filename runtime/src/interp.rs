@@ -10,10 +10,23 @@ use lipi_compiler::checker::{self, binary_error, condition_error, module_binding
 use lipi_compiler::resolve::{self, find_project_root, Resolved};
 use lipi_compiler::suggest;
 use lipi_compiler::{Diagnostic, Severity, Span};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+/// Something `time.after` or `time.every` scheduled. Timers run after the main
+/// program finishes, in time order, like JavaScript's event loop.
+pub(crate) struct Timer {
+    pub id: u64,
+    pub due: Instant,
+    pub every: Option<Duration>,
+    pub f: Value,
+    pub stopped: Rc<Cell<bool>>,
+    pub span: Span,
+    pub file: Rc<str>,
+}
 
 /// How deep function calls may nest before we report runaway recursion.
 const MAX_DEPTH: usize = 5000;
@@ -86,6 +99,10 @@ pub struct Interpreter {
     pub(crate) server: crate::server::ServerState,
     /// The slot names of every resolved function, keyed by its address (see resolver.rs).
     layouts: HashMap<usize, Names>,
+    pub(crate) timers: Vec<Timer>,
+    pub(crate) next_timer: u64,
+    /// Whether errors printed while timers run use colours (set by the command line).
+    pub color: bool,
 }
 
 impl Default for Interpreter {
@@ -118,6 +135,9 @@ impl Interpreter {
             project_root: PathBuf::from("."),
             server: Default::default(),
             layouts: HashMap::new(),
+            timers: Vec::new(),
+            next_timer: 0,
+            color: false,
         }
     }
 
@@ -243,7 +263,65 @@ impl Interpreter {
         }
         let result = self.run_source(&source, file);
         self.loading.clear();
-        result.map(|(env, _)| env)
+        let (env, _) = result?;
+        self.run_timers()?;
+        Ok(env)
+    }
+
+    /// Run what `time.after` and `time.every` scheduled, earliest first, until
+    /// none are left. An error stops its timer and is shown; the others go on
+    /// (as in JavaScript), and the program then exits with code 1.
+    fn run_timers(&mut self) -> Result<(), RunError> {
+        let mut failed = false;
+        loop {
+            self.timers.retain(|t| !t.stopped.get());
+            let Some(i) = (0..self.timers.len()).min_by_key(|&i| (self.timers[i].due, self.timers[i].id)) else { break };
+            let now = Instant::now();
+            if self.timers[i].due > now {
+                std::thread::sleep(self.timers[i].due - now);
+            }
+            let t = &mut self.timers[i];
+            let (f, span, stopped, file) = (t.f.clone(), t.span, t.stopped.clone(), t.file.clone());
+            match t.every {
+                Some(d) => t.due += d,
+                None => t.stopped.set(true),
+            }
+            let prev = std::mem::replace(&mut self.file, file);
+            let r = self.call_callback(&f, Vec::new(), span);
+            self.file = prev;
+            match r {
+                Ok(_) | Err(Flow::Return(_)) | Err(Flow::Break) | Err(Flow::Continue) => {}
+                Err(Flow::Exit(code)) => return Err(RunError::Exit(code)),
+                Err(Flow::Throw(t)) => {
+                    stopped.set(true);
+                    failed = true;
+                    use std::io::Write;
+                    let _ = std::io::stdout().flush();
+                    eprint!("{}", self.render(&RunError::Runtime(t), self.color));
+                }
+            }
+        }
+        if failed {
+            return Err(RunError::Exit(1));
+        }
+        Ok(())
+    }
+
+    /// `time.after(ms, block)` / `time.every(ms, block)`: returns the timer's stop() switch.
+    pub(crate) fn schedule(&mut self, ms: f64, every: bool, f: Value, span: Span) -> Rc<Cell<bool>> {
+        let wait = Duration::from_secs_f64(ms.max(0.0) / 1000.0);
+        let stopped = Rc::new(Cell::new(false));
+        self.next_timer += 1;
+        self.timers.push(Timer {
+            id: self.next_timer,
+            due: Instant::now() + wait,
+            every: if every { Some(wait) } else { None },
+            f,
+            stopped: stopped.clone(),
+            span,
+            file: self.file.clone(),
+        });
+        stopped
     }
 
     /// Parse and check a file without running it.
@@ -345,7 +423,145 @@ impl Interpreter {
     }
 
     fn closure(&self, f: &Rc<FuncDecl>, env: &Rc<Env>) -> Value {
-        Value::Func(Rc::new(Closure { decl: f.clone(), env: env.clone(), file: self.file.clone(), this: None, layout: self.layout_of(Rc::as_ptr(f) as usize) }))
+        Value::Func(Rc::new(Closure { decl: f.clone(), env: env.clone(), file: self.file.clone(), this: None, owner: None, layout: self.layout_of(Rc::as_ptr(f) as usize) }))
+    }
+
+    /// A type's method bound to an object.
+    fn method_closure(&self, m: Rc<FuncDecl>, owner: Rc<TypeInfo>, this: Value) -> Rc<Closure> {
+        let layout = self.layout_of(Rc::as_ptr(&m) as usize);
+        Rc::new(Closure { decl: m, env: owner.env.clone(), file: owner.file.clone(), this: Some(this), owner: Some(owner), layout })
+    }
+
+    // ----- types that extend other types ---------------------------------------
+
+    /// A type and the types it extends, nearest first.
+    fn type_chain(&self, t: &Rc<TypeInfo>) -> Result<Vec<Rc<TypeInfo>>, Flow> {
+        let mut chain = vec![t.clone()];
+        loop {
+            let cur = chain.last().expect("never empty").clone();
+            let Some(p) = &cur.decl.parent else { break };
+            let in_its_file = |this: &Self, diag: Diagnostic| {
+                let mut thrown = this.thrown_diag(diag);
+                thrown.file = cur.file.clone();
+                Flow::Throw(thrown)
+            };
+            let parent = match self.read(&p.text, p.res.get(), p.span, &cur.env)? {
+                Value::Type(pt) => pt,
+                other => {
+                    let message = format!("\"{}\" can't extend \"{}\": that's {}, not a type", cur.decl.name.text, p.text, with_article(&other.type_name()));
+                    return Err(in_its_file(self, Diagnostic::error(message, p.span).with_code("LIP2001")));
+                }
+            };
+            if chain.iter().any(|x| Rc::ptr_eq(x, &parent)) {
+                let message = format!("\"{}\" extends itself through \"{}\"", t.decl.name.text, cur.decl.name.text);
+                return Err(in_its_file(self, Diagnostic::error(message, p.span).with_code("LIP2001").with_hint("Types can't extend each other in a circle.")));
+            }
+            chain.push(parent);
+        }
+        Ok(chain)
+    }
+
+    /// Every field of a type, the parents' first (a field declared again keeps
+    /// its place), each with the type that declares it and its position there.
+    fn all_fields(&self, t: &Rc<TypeInfo>) -> Result<Vec<(Rc<TypeInfo>, usize)>, Flow> {
+        if t.decl.parent.is_none() {
+            return Ok((0..t.decl.fields.len()).map(|i| (t.clone(), i)).collect());
+        }
+        let mut out: Vec<(Rc<TypeInfo>, usize)> = Vec::new();
+        for ty in self.type_chain(t)?.iter().rev() {
+            for (i, f) in ty.decl.fields.iter().enumerate() {
+                match out.iter().position(|(o, j)| o.decl.fields[*j].name.text == f.name.text) {
+                    Some(k) => out[k] = (ty.clone(), i),
+                    None => out.push((ty.clone(), i)),
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// A method of a type or of a type it extends, with the type that declares it.
+    fn find_method(&self, t: &Rc<TypeInfo>, name: &str) -> Result<Option<(Rc<FuncDecl>, Rc<TypeInfo>)>, Flow> {
+        if let Some(m) = t.decl.methods.iter().find(|m| m.name.text == name) {
+            return Ok(Some((m.clone(), t.clone())));
+        }
+        if t.decl.parent.is_none() {
+            return Ok(None);
+        }
+        for ty in self.type_chain(t)?.into_iter().skip(1) {
+            if let Some(m) = ty.decl.methods.iter().find(|m| m.name.text == name) {
+                return Ok(Some((m.clone(), ty)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// `super` inside a method of `owner`: the methods of the types it extends, bound to the same object.
+    fn super_object(&self, owner: &Rc<TypeInfo>, this: &Value) -> Result<Value, Flow> {
+        let chain = self.type_chain(owner)?;
+        let mut fields = Fields::new();
+        for ty in chain.iter().skip(1) {
+            for m in &ty.decl.methods {
+                if !fields.contains_key(&m.name.text) {
+                    fields.insert(m.name.text.clone(), Value::Func(self.method_closure(m.clone(), ty.clone(), this.clone())));
+                }
+            }
+        }
+        let parent_name: Rc<dyn std::any::Any> = Rc::new(chain.get(1).map(|p| p.decl.name.text.clone()).unwrap_or_default());
+        Ok(Value::Object(Rc::new(ObjectData { fields: RefCell::new(fields), ty: None, module: None, tag: Some("super"), payload: Some(parent_name) })))
+    }
+
+    // ----- spread and patterns ------------------------------------------------------
+
+    /// `...v` in an Array literal or a call's arguments.
+    fn spread_into(&self, out: &mut Vec<Value>, v: Value, span: Span, into: &str) -> Result<(), Flow> {
+        match v {
+            Value::List(l) => out.extend(l.borrow().iter().cloned()),
+            Value::Str(s) => out.extend(s.chars().map(|c| Value::string(c.to_string()))),
+            other => return Err(self.throw(checker::spread_error(into, &other.type_name(), span))),
+        }
+        Ok(())
+    }
+
+    /// Take `v` apart into a pattern's variables: `{name, age} = user`, `[a, b] = pair`.
+    fn destructure(&mut self, p: &Pattern, v: Value, value_span: Span, env: &Rc<Env>) -> Result<(), Flow> {
+        match p {
+            Pattern::Object { fields, rest, .. } => {
+                let Value::Object(o) = &v else { return Err(self.throw(checker::pattern_error(true, &v.type_name(), value_span))) };
+                let o = o.clone();
+                let source = Expr { res: Default::default(), kind: ExprKind::Null, span: value_span };
+                for (key, name) in fields {
+                    let x = self.get_field(&v, key, false, &source)?;
+                    self.assign_to(env, name, x, name.span)?;
+                }
+                if let Some(r) = rest {
+                    let named: Vec<&str> = fields.iter().map(|(k, _)| k.text.as_str()).collect();
+                    let others: Fields = o.fields.borrow().iter().filter(|(k, _)| !named.contains(&k.as_str())).map(|(k, x)| (k.clone(), x.clone())).collect();
+                    self.assign_to(env, r, Value::object(others), r.span)?;
+                }
+            }
+            Pattern::List { items, rest, .. } => {
+                let Value::List(l) = &v else { return Err(self.throw(checker::pattern_error(false, &v.type_name(), value_span))) };
+                let values = l.borrow().clone();
+                let n = items.len();
+                if values.len() < n {
+                    return Err(self.err(
+                        "LIP5001",
+                        format!("this pattern needs {n} item{}, but the Array has {}", if n == 1 { "" } else { "s" }, values.len()),
+                        value_span,
+                        Some("Check the Array's length first, or take fewer items.".into()),
+                    ));
+                }
+                for (i, item) in items.iter().enumerate() {
+                    if let Some(name) = item {
+                        self.assign_to(env, name, values[i].clone(), name.span)?;
+                    }
+                }
+                if let Some(r) = rest {
+                    self.assign_to(env, r, Value::list(values[n..].to_vec()), r.span)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn layout_of(&self, key: usize) -> Names {
@@ -551,7 +767,7 @@ impl Interpreter {
                     }
                 }
             }
-            StmtKind::For { first, second, iter, body } => self.exec_for(first, second.as_ref(), iter, body, env)?,
+            StmtKind::For { first, second, iter, body, pattern } => self.exec_for(first, second.as_ref(), iter, body, pattern.as_ref(), env)?,
             StmtKind::Func(f) | StmtKind::Component(f) => self.define_name(env, &f.name, self.closure(f, env)),
             StmtKind::State { name, ty, value } => {
                 let v = self.eval(value, env)?;
@@ -680,7 +896,7 @@ impl Interpreter {
         Ok(())
     }
 
-    fn exec_for(&mut self, first: &Name, second: Option<&Name>, iter: &Expr, body: &[Stmt], env: &Rc<Env>) -> Result<(), Flow> {
+    fn exec_for(&mut self, first: &Name, second: Option<&Name>, iter: &Expr, body: &[Stmt], pattern: Option<&Pattern>, env: &Rc<Env>) -> Result<(), Flow> {
         if let ExprKind::Range { start, end, step } = &iter.kind {
             let (from, to, step) = self.range_parts(start, end, step.as_deref(), env)?;
             let mut i = from;
@@ -691,7 +907,12 @@ impl Interpreter {
                         self.define_name(env, first, Value::Int(index));
                         self.define_name(env, s, Value::Int(i));
                     }
-                    None => self.define_name(env, first, Value::Int(i)),
+                    None => {
+                        self.define_name(env, first, Value::Int(i));
+                        if let Some(p) = pattern {
+                            self.destructure(p, Value::Int(i), iter.span, env)?;
+                        }
+                    }
                 }
                 if !self.loop_body(body, env)? {
                     break;
@@ -722,7 +943,13 @@ impl Interpreter {
                     self.define_name(env, first, key);
                     self.define_name(env, s, value);
                 }
-                None => self.define_name(env, first, if keyed { key } else { value }),
+                None => {
+                    let item = if keyed { key } else { value };
+                    self.define_name(env, first, item.clone());
+                    if let Some(p) = pattern {
+                        self.destructure(p, item, iter.span, env)?;
+                    }
+                }
             }
             if !self.loop_body(body, env)? {
                 break;
@@ -809,6 +1036,10 @@ impl Interpreter {
                 };
                 self.set_index(&obj, &index, v, obj_expr, index_expr)
             }
+            Target::Pattern(p) => {
+                let v = self.eval(value, env)?;
+                self.destructure(p, v, value.span, env)
+            }
         }
     }
 
@@ -842,7 +1073,10 @@ impl Interpreter {
                 "Object" => matches!(v, Value::Object(_)),
                 "Function" => matches!(v, Value::Func(_) | Value::Native(_) | Value::Type(_) | Value::Method(_)),
                 "Task" => matches!(v, Value::Task(_)),
-                other => matches!(v, Value::Object(o) if o.ty.as_ref().is_some_and(|ty| ty.decl.name.text == other)),
+                // An Admin (type Admin extends User) is also a User.
+                other => matches!(v, Value::Object(o) if o.ty.as_ref().is_some_and(|ty| {
+                    ty.decl.name.text == other || (ty.decl.parent.is_some() && self.type_chain(ty).is_ok_and(|c| c.iter().any(|x| x.decl.name.text == other)))
+                })),
             },
         }
     }
@@ -870,17 +1104,38 @@ impl Interpreter {
             ExprKind::List(items) => {
                 let mut out = Vec::with_capacity(items.len());
                 for item in items {
-                    out.push(self.eval(item, env)?);
+                    match &item.kind {
+                        ExprKind::Spread(inner) => {
+                            let v = self.eval(inner, env)?;
+                            self.spread_into(&mut out, v, inner.span, "an Array")?;
+                        }
+                        _ => out.push(self.eval(item, env)?),
+                    }
                 }
                 Value::list(out)
             }
             ExprKind::Object(fields) => {
                 let mut map = Fields::with_capacity(fields.len());
                 for (k, v) in fields {
-                    map.insert(k.text.clone(), self.eval(v, env)?);
+                    match &v.kind {
+                        // `{...defaults, color: "red"}`: a later key replaces an earlier one's value, keeping its place.
+                        ExprKind::Spread(inner) => match self.eval(inner, env)? {
+                            Value::Object(o) if o.module.is_none() => {
+                                for (fk, fv) in o.fields.borrow().iter() {
+                                    map.insert(fk.clone(), fv.clone());
+                                }
+                            }
+                            other => return Err(self.throw(checker::spread_error("an Object", &other.type_name(), inner.span))),
+                        },
+                        _ => {
+                            map.insert(k.text.clone(), self.eval(v, env)?);
+                        }
+                    }
                 }
                 Value::object(map)
             }
+            // Only valid inside [ ], { } and arguments, which handle it themselves.
+            ExprKind::Spread(inner) => self.eval(inner, env)?,
             ExprKind::Unary(UnaryOp::Neg, inner) => match self.eval(inner, env)? {
                 Value::Int(n) => Value::Int(n.checked_neg().ok_or_else(|| self.overflow(inner.span))?),
                 Value::Num(n) => Value::Num(-n),
@@ -976,6 +1231,11 @@ impl Interpreter {
         let mut pos = Vec::with_capacity(args.len());
         let mut named = Vec::new();
         for a in args {
+            if let ExprKind::Spread(inner) = &a.value.kind {
+                let v = self.eval(inner, env)?;
+                self.spread_into(&mut pos, v, inner.span, "the arguments")?;
+                continue;
+            }
             let v = self.eval(&a.value, env)?;
             match &a.name {
                 Some(n) => named.push((n.text.clone(), v)),
@@ -1076,9 +1336,8 @@ impl Interpreter {
                     }
                 }
                 if let Some(ty) = &o.ty {
-                    if let Some(m) = ty.decl.methods.iter().find(|m| m.name.text == key) {
-                        let layout = self.layout_of(Rc::as_ptr(m) as usize);
-                        return Ok(Value::Func(Rc::new(Closure { decl: m.clone(), env: ty.env.clone(), file: ty.file.clone(), this: Some(obj.clone()), layout })));
+                    if let Some((m, owner)) = self.find_method(ty, key)? {
+                        return Ok(Value::Func(self.method_closure(m, owner, obj.clone())));
                     }
                 }
                 if o.module.is_none() {
@@ -1124,9 +1383,19 @@ impl Interpreter {
         let key = name.text.as_str();
         let mut available: Vec<String> = o.fields.borrow().keys().cloned().collect();
         if let Some(ty) = &o.ty {
-            available.extend(ty.decl.methods.iter().map(|m| m.name.text.clone()));
+            for t in self.type_chain(ty).unwrap_or_else(|_| vec![ty.clone()]) {
+                for m in &t.decl.methods {
+                    if !available.contains(&m.name.text) {
+                        available.push(m.name.text.clone());
+                    }
+                }
+            }
         }
         let suggestion = suggest::did_you_mean(key, available.iter().map(String::as_str));
+        if o.tag == Some("super") {
+            let parent = o.payload.as_ref().and_then(|p| p.downcast_ref::<String>()).cloned().unwrap_or_default();
+            return self.err("LIP5004", format!("\"{parent}\" has no method \"{key}\""), name.span, suggestion.or_else(|| Some(format!("Available: {}", available.join(", ")))));
+        }
         let (code, message, fallback) = match (&o.module, &o.ty) {
             (Some(m), _) if builtins::MODULES.contains(&m.as_str()) => {
                 ("LIP1004", format!("the {m} module has no \"{key}\""), Some(format!("Available: {}", available.join(", "))))
@@ -1153,14 +1422,15 @@ impl Interpreter {
                     return Err(self.err("LIP5008", "modules can't be changed from outside", name.span, None));
                 }
                 if let Some(ty) = &o.ty {
-                    match ty.decl.fields.iter().find(|f| f.name.text == name.text) {
+                    let all = self.all_fields(ty)?;
+                    match all.iter().map(|(t, i)| &t.decl.fields[*i]).find(|f| f.name.text == name.text) {
                         Some(field) => {
                             if let Some(t) = &field.ty {
                                 self.check_declared(&v, t, &name.text, value_span)?;
                             }
                         }
                         None => {
-                            let names: Vec<&str> = ty.decl.fields.iter().map(|f| f.name.text.as_str()).collect();
+                            let names: Vec<&str> = all.iter().map(|(t, i)| t.decl.fields[*i].name.text.as_str()).collect();
                             let hint = suggest::did_you_mean(&name.text, names.iter().copied()).unwrap_or_else(|| format!("Its fields are: {}", names.join(", ")));
                             return Err(self.err("LIP5004", format!("\"{}\" has no field \"{}\"", ty.decl.name.text, name.text), name.span, Some(hint)));
                         }
@@ -1263,9 +1533,8 @@ impl Interpreter {
                     return self.call_value(f, pos, named, span, None);
                 }
                 if let Some(ty) = &o.ty {
-                    if let Some(m) = ty.decl.methods.iter().find(|m| m.name.text == key) {
-                        let layout = self.layout_of(Rc::as_ptr(m) as usize);
-                        let c = Rc::new(Closure { decl: m.clone(), env: ty.env.clone(), file: ty.file.clone(), this: Some(obj.clone()), layout });
+                    if let Some((m, owner)) = self.find_method(ty, key)? {
+                        let c = self.method_closure(m, owner, obj.clone());
                         return self.call_function(&c, pos, named, span);
                     }
                 }
@@ -1324,13 +1593,15 @@ impl Interpreter {
     /// (so `items.map(x => x * 2)` works even though map offers the index too).
     pub fn call_callback(&mut self, f: &Value, mut args: Vec<Value>, span: Span) -> Result<Value, Flow> {
         if let Value::Func(c) = f {
-            args.truncate(c.decl.params.len());
+            if !c.decl.params.iter().any(|p| p.rest) {
+                args.truncate(c.decl.params.len());
+            }
         }
         self.call_value(f.clone(), args, Vec::new(), span, None)
     }
 
     fn signature(decl: &FuncDecl) -> String {
-        let params: Vec<&str> = decl.params.iter().map(|p| p.name.text.as_str()).collect();
+        let params: Vec<String> = decl.params.iter().map(|p| if p.rest { format!("...{}", p.name.text) } else { p.name.text.clone() }).collect();
         format!("{}({})", decl.name.text, params.join(", "))
     }
 
@@ -1352,7 +1623,9 @@ impl Interpreter {
             ));
         }
         let params = &decl.params;
-        if pos.len() > params.len() {
+        let rest_at = params.iter().position(|p| p.rest);
+        let fixed = rest_at.unwrap_or(params.len());
+        if pos.len() > fixed && rest_at.is_none() {
             let n = params.len();
             return Err(self.err(
                 "LIP2003",
@@ -1361,10 +1634,16 @@ impl Interpreter {
                 Some(format!("It is defined as {}.", Self::signature(&decl))),
             ));
         }
+        let mut pos = pos;
+        // `...rest` collects the positional arguments after the others.
+        let extra = if pos.len() > fixed { pos.split_off(fixed) } else { Vec::new() };
         let mut values: Vec<Option<Value>> = pos.into_iter().map(Some).collect();
         values.resize(params.len(), None);
+        if let Some(r) = rest_at {
+            values[r] = Some(Value::list(extra));
+        }
         for (n, v) in named {
-            match params.iter().position(|p| p.name.text == n) {
+            match params.iter().position(|p| p.name.text == n && !p.rest) {
                 Some(i) if values[i].is_some() => {
                     return Err(self.err("LIP2003", format!("the argument \"{n}\" was given twice"), span, None));
                 }
@@ -1404,6 +1683,9 @@ impl Interpreter {
         let env = Env::with_layout(Some(c.env.clone()), EnvKind::Function, &c.layout);
         if let Some(this) = &c.this {
             env.define("self", this.clone());
+            if let Some(owner) = c.owner.as_ref().filter(|o| o.decl.parent.is_some()) {
+                env.define("super", self.super_object(owner, this)?);
+            }
         }
         let caller_file = std::mem::replace(&mut self.file, c.file.clone());
         self.frames.push(Frame { decl: decl.clone(), file: caller_file.clone(), line: span.line });
@@ -1458,36 +1740,40 @@ impl Interpreter {
     }
 
     fn construct(&mut self, t: &Rc<TypeInfo>, pos: Vec<Value>, named: Vec<(String, Value)>, span: Span) -> Result<Value, Flow> {
-        let decl = &t.decl;
-        let tname = &decl.name.text;
-        let field_list = || decl.fields.iter().map(|f| f.name.text.as_str()).collect::<Vec<_>>().join(", ");
-        if pos.len() > decl.fields.len() {
+        let tname = &t.decl.name.text;
+        // With `extends`, the parents' fields come first.
+        let all = self.all_fields(t)?;
+        let field_of = |k: usize| &all[k].0.decl.fields[all[k].1];
+        let field_list = || (0..all.len()).map(|k| field_of(k).name.text.as_str()).collect::<Vec<_>>().join(", ");
+        if pos.len() > all.len() {
             return Err(self.err(
                 "LIP2003",
-                format!("\"{tname}\" has {} field{}, but {} values were given", decl.fields.len(), if decl.fields.len() == 1 { "" } else { "s" }, pos.len()),
+                format!("\"{tname}\" has {} field{}, but {} values were given", all.len(), if all.len() == 1 { "" } else { "s" }, pos.len()),
                 span,
                 Some(format!("Its fields are: {}", field_list())),
             ));
         }
         let mut values: Vec<Option<Value>> = pos.into_iter().map(Some).collect();
-        values.resize(decl.fields.len(), None);
+        values.resize(all.len(), None);
         for (n, v) in named {
-            match decl.fields.iter().position(|f| f.name.text == n) {
+            match (0..all.len()).position(|k| field_of(k).name.text == n) {
                 Some(i) => values[i] = Some(v),
                 None => {
-                    let hint = suggest::did_you_mean(&n, decl.fields.iter().map(|f| f.name.text.as_str())).unwrap_or_else(|| format!("Its fields are: {}", field_list()));
+                    let hint = suggest::did_you_mean(&n, (0..all.len()).map(|k| field_of(k).name.text.as_str())).unwrap_or_else(|| format!("Its fields are: {}", field_list()));
                     return Err(self.err("LIP1007", format!("\"{tname}\" has no field \"{n}\""), span, Some(hint)));
                 }
             }
         }
         let mut fields = Fields::new();
-        for (i, f) in decl.fields.iter().enumerate() {
+        for (i, (owner, _)) in all.iter().enumerate() {
+            let f = field_of(i);
             let v = match values[i].take() {
                 Some(v) => v,
                 None => match &f.default {
                     Some(d) => {
-                        let prev = std::mem::replace(&mut self.file, t.file.clone());
-                        let r = self.eval(d, &t.env);
+                        // A default runs where its type was defined.
+                        let prev = std::mem::replace(&mut self.file, owner.file.clone());
+                        let r = self.eval(d, &owner.env);
                         self.file = prev;
                         r?
                     }

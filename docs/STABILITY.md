@@ -40,7 +40,8 @@ true false null const use from as export function async await try catch
 finally throw match show`.
 
 Words with a meaning in some places: `to` and `step` (ranges), `with`
-(trailing blocks), `type`, `test`, `component`, `state`.
+(trailing blocks), `type`, `extends` (after a type's name), `super` (in the
+methods of a type that extends another), `test`, `component`, `state`.
 
 Reserved for future features (they can't be used as names): `route`,
 `server` (also the web server module), `enum`, `trait`, `yield`.

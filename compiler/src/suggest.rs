@@ -114,7 +114,38 @@ pub fn foreign_name_hint(name: &str) -> Option<&'static str> {
         "str" => "Use toString(value) to convert something to text.",
         "int" | "float" | "parseInt" | "parseFloat" => "Use toNumber(value), toInteger(value) or toDecimal(value).",
         "this" => "Inside a type's methods, LiPi calls the current object self.",
+        "super" => "super only works inside the methods of a type that extends another, for example: type Admin extends User",
+        "new" => "LiPi creates an object by calling its type like a function: user = User(\"Asha\", 25)",
+        "class" => "LiPi defines classes with `type`, for example:\n    type User\n        name: String",
+        "setTimeout" | "setInterval" => "Use time.after(ms) or time.every(ms) with an indented block (in JavaScript builds).",
+        "JSON" => "LiPi's JSON module is json: json.parse(text) and json.stringify(value).",
+        "Math" => "LiPi's math module is math (lowercase): math.floor(x), math.random().",
+        "Object" | "Array" => "Objects and Arrays have their own methods: obj.keys(), items.map(x => x * 2).",
         "import" | "require" | "include" => "LiPi loads modules with use, for example: use math",
+        _ => return None,
+    })
+}
+
+/// Hints for method names from JavaScript (and other languages) that LiPi spells differently.
+pub fn foreign_member_hint(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "includes" | "has" | "contain" => "LiPi calls this contains: items.contains(x)",
+        "forEach" => "LiPi calls this each: items.each(x => show x), or use a for loop.",
+        "some" => "LiPi calls this any: items.any(x => x > 3)",
+        "every" => "LiPi calls this all: items.all(x => x > 3)",
+        "toUpperCase" => "LiPi calls this upper: name.upper()",
+        "toLowerCase" => "LiPi calls this lower: name.lower()",
+        "substring" | "substr" => "LiPi calls this slice: text.slice(0, 5)",
+        "charAt" | "at" => "Use [ ] to get one item or character: text[0], items[-1] (the last one).",
+        "concat" => "Join two Arrays or two Strings with +: first + second, or spread them: [...first, ...second]",
+        "replaceAll" => "LiPi's replace already replaces every match: text.replace(\"a\", \"b\")",
+        "trimLeft" => "LiPi calls this trimStart.",
+        "trimRight" => "LiPi calls this trimEnd.",
+        "size" | "len" | "count" => "Use the .length property.",
+        "toSorted" => "LiPi's sort already returns a new Array: items.sort()",
+        "toReversed" => "LiPi's reverse already returns a new Array: items.reverse()",
+        "splice" => "Use insert(position, item) to add and removeAt(position) to remove.",
+        "match" | "matchAll" | "search" | "test" => "Use the regex module: regex.find(pattern, text), regex.findAll(...), regex.test(...)",
         _ => return None,
     })
 }

@@ -81,6 +81,33 @@ const DOCS: &[(&str, &str, &str)] = &[
     ("time.now", "time.now() -> Integer", "Milliseconds since 1970 (UTC)."),
     ("time.date", "time.date(ms) -> Object", "{year, month, day, hour, minute, second, weekday} in UTC."),
     ("time.iso", "time.iso(ms) -> String", "An ISO 8601 timestamp, like 2026-09-11T10:30:00Z."),
+    ("time.after", "time.after(ms) + block -> {stop()}", "Runs the block once, ms milliseconds after the main program (like setTimeout)."),
+    ("time.every", "time.every(ms) + block -> {stop()}", "Runs the block every ms milliseconds until stop() (like setInterval)."),
+    ("regex.test", "regex.test(pattern, text, ignoreCase: false) -> Boolean", "Whether the pattern matches somewhere. Write patterns in single quotes: '\\d+'."),
+    ("regex.find", "regex.find(pattern, text) -> {text, index, groups, named} | null", "The first match, or null."),
+    ("regex.findAll", "regex.findAll(pattern, text) -> Array", "Every match: {text, index, groups, named}."),
+    ("regex.replace", "regex.replace(pattern, text, replacement) -> String", "Replaces every match. The replacement can use $1 and $<name>, or be a function of the match."),
+    ("regex.split", "regex.split(pattern, text) -> Array", "Splits the text wherever the pattern matches."),
+    ("encoding.base64Encode", "encoding.base64Encode(text) -> String", "Base64 of the text's UTF-8 bytes (like btoa)."),
+    ("encoding.base64Decode", "encoding.base64Decode(text) -> String", "Decodes Base64 back to text."),
+    ("encoding.urlEncode", "encoding.urlEncode(text) -> String", "Percent-encodes text for a URL (like encodeURIComponent)."),
+    ("encoding.urlDecode", "encoding.urlDecode(text) -> String", "Decodes %XX sequences."),
+    ("encoding.hexEncode", "encoding.hexEncode(text) -> String", "The text's UTF-8 bytes as hex."),
+    ("encoding.hexDecode", "encoding.hexDecode(text) -> String", "Decodes hex back to text."),
+    ("math.trunc", "math.trunc(x) -> Integer", "Drops the fraction (towards zero)."),
+    ("math.bitAnd", "math.bitAnd(a, b) -> Integer", "Bitwise AND of two Integers (a & b in JavaScript)."),
+    ("math.bitOr", "math.bitOr(a, b) -> Integer", "Bitwise OR (a | b)."),
+    ("math.bitXor", "math.bitXor(a, b) -> Integer", "Bitwise XOR (a ^ b)."),
+    ("math.bitNot", "math.bitNot(a) -> Integer", "Bitwise NOT (~a)."),
+    ("math.shiftLeft", "math.shiftLeft(x, bits) -> Integer", "Shifts the bits left (x << bits), on 64 bits."),
+    ("math.shiftRight", "math.shiftRight(x, bits) -> Integer", "Shifts the bits right, keeping the sign (x >> bits)."),
+    ("Array.findIndex", "items.findIndex(item => test) -> Integer | null", "The position of the first item that passes the test."),
+    ("Array.findLast", "items.findLast(item => test)", "The last item that passes the test, or null."),
+    ("Array.flatMap", "items.flatMap(item => ...) -> Array", "Maps each item and joins the resulting Arrays."),
+    ("Array.shift", "items.shift()", "Removes and returns the first item."),
+    ("Array.unshift", "items.unshift(item, ...)", "Adds items at the start."),
+    ("Array.groupBy", "items.groupBy(item => key) -> Object", "Groups the items into an Object of Arrays by key."),
+    ("Number.toFixed", "n.toFixed(digits) -> String", "The number with exactly that many decimals, like 3.14."),
     ("process.args", "process.args: Array", "The command-line arguments."),
     ("process.exit", "process.exit(code)", "Stops the program."),
     ("process.run", "process.run(command) -> {code, output, error}", "Runs a shell command."),
@@ -669,6 +696,10 @@ fn definitions(program: &Program) -> HashMap<String, (Span, u8)> {
                 add(out, n, if *constant { 21 } else { 6 });
                 expr(value, out);
             }
+            StmtKind::Assign { target: Target::Pattern(p), value, .. } => {
+                p.names().into_iter().for_each(|n| add(out, n, 6));
+                expr(value, out);
+            }
             StmtKind::Assign { value, .. } | StmtKind::Expr(value) => expr(value, out),
             StmtKind::Func(f) | StmtKind::Component(f) => {
                 add(out, &f.name, 3);
@@ -685,8 +716,11 @@ fn definitions(program: &Program) -> HashMap<String, (Span, u8)> {
                     func(m, out);
                 }
             }
-            StmtKind::For { first, second, body, .. } => {
-                add(out, first, 6);
+            StmtKind::For { first, second, body, pattern, .. } => {
+                match pattern {
+                    Some(p) => p.names().into_iter().for_each(|n| add(out, n, 6)),
+                    None => add(out, first, 6),
+                }
                 if let Some(s) = second {
                     add(out, s, 6);
                 }

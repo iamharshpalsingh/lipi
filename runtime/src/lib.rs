@@ -6,7 +6,9 @@
 pub mod builtins;
 mod crypto;
 mod db;
+mod encoding;
 mod http;
+mod pattern;
 mod server;
 pub mod interp;
 mod json;

@@ -47,8 +47,10 @@ pub enum StmtKind {
     Assign { target: Target, op: Option<BinOp>, ty: Option<TypeExpr>, value: Expr, constant: bool },
     If { branches: Vec<(Expr, Block)>, otherwise: Option<Block> },
     While { cond: Expr, body: Block },
-    /// `for item in items` or `for key, value in object`
-    For { first: Name, second: Option<Name>, iter: Expr, body: Block },
+    /// `for item in items` or `for key, value in object`. With a pattern
+    /// (`for {name, age} in people`), `first` is a hidden variable holding
+    /// each item and the pattern takes it apart.
+    For { first: Name, second: Option<Name>, iter: Expr, body: Block, pattern: Option<Pattern> },
     Repeat { count: Expr, body: Block },
     Func(Rc<FuncDecl>),
     Return(Option<Expr>),
@@ -75,6 +77,35 @@ pub enum Target {
     Name(Name),
     Field(Expr, Name),
     Index(Expr, Expr),
+    /// `{name, age} = user` or `[first, ...rest] = items`
+    Pattern(Pattern),
+}
+
+/// Taking an Object or an Array apart into variables.
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    /// `{name, age: years, ...others}`: (field, variable) pairs; `rest` gets the other fields.
+    Object { fields: Vec<(Name, Name)>, rest: Option<Name>, span: Span },
+    /// `[first, _, third, ...rest]`: `None` skips an item (`_`); `rest` gets the remaining items.
+    List { items: Vec<Option<Name>>, rest: Option<Name>, span: Span },
+}
+
+impl Pattern {
+    /// The variables the pattern creates, in order.
+    pub fn names(&self) -> Vec<&Name> {
+        let (mut out, rest): (Vec<&Name>, &Option<Name>) = match self {
+            Pattern::Object { fields, rest, .. } => (fields.iter().map(|(_, v)| v).collect(), rest),
+            Pattern::List { items, rest, .. } => (items.iter().flatten().collect(), rest),
+        };
+        out.extend(rest.iter());
+        out
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Pattern::Object { span, .. } | Pattern::List { span, .. } => *span,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +120,8 @@ pub struct Param {
     pub name: Name,
     pub ty: Option<TypeExpr>,
     pub default: Option<Expr>,
+    /// `...rest`: collects the remaining positional arguments into an Array.
+    pub rest: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -115,6 +148,8 @@ pub struct FieldDecl {
 #[derive(Debug, Clone)]
 pub struct TypeDecl {
     pub name: Name,
+    /// `type Admin extends User`: fields and methods come from the parent too.
+    pub parent: Option<Name>,
     pub fields: Vec<FieldDecl>,
     pub methods: Vec<Rc<FuncDecl>>,
 }
@@ -176,6 +211,9 @@ pub enum ExprKind {
     Index { object: Box<Expr>, index: Box<Expr> },
     Lambda(Rc<FuncDecl>),
     Await(Box<Expr>),
+    /// `...items` inside `[ ]`, `{ }` or a call's arguments. In an Object
+    /// literal it is stored with the key "...".
+    Spread(Box<Expr>),
 }
 
 #[derive(Debug, Clone)]

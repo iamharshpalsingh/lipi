@@ -256,6 +256,96 @@ page "/"
 
 ---
 
+## JavaScript ka code, LiPi me
+
+JavaScript ka roz ka kaam LiPi me bhi hota hai. Jo cheez aap JavaScript me likhte ho, uska LiPi roop:
+
+| JavaScript | LiPi |
+|---|---|
+| `const {naam, city} = user` | `{naam, city} = user` |
+| `const [pehla, ...baaki] = list` | `[pehla, ...baaki] = list` |
+| `[...a, ...b]`, `{...obj, x: 1}` | bilkul wahi |
+| `function jod(...nums)` | `jod(...nums)` |
+| `class Dog extends Animal`, `super.bolo()` | `type Dog extends Animal`, `super.bolo()` |
+| `/\d+/g`, `text.match(...)`, `text.replace(/x/g, ...)` | `regex.findAll('\d+', text)`, `regex.replace(...)` |
+| `setTimeout`, `setInterval` | `time.after(ms)`, `time.every(ms)` + block |
+| `btoa`, `encodeURIComponent` | `encoding.base64Encode`, `encoding.urlEncode` |
+| `findIndex`, `flatMap`, `shift`, `unshift`, `Object.groupBy` | wahi naam; `list.groupBy(fn)` |
+| `n.toFixed(2)`, `list.sort((a, b) => a - b)` | bilkul wahi |
+| `a & b`, `a << 2` | `math.bitAnd(a, b)`, `math.shiftLeft(a, 2)` |
+| `includes`, `forEach`, `some`, `every` | `contains`, `each`, `any`, `all` (galat naam likho to LiPi khud batata hai) |
+| npm packages, DOM, browser APIs | `js.import(...)`, `js.global` |
+
+Spread aur patterns:
+
+```lipi
+scores = [72, 95, 88]
+sab = [...scores, 100]
+show math.max(...sab)
+{naam, city: shehar} = {naam: "Asha", city: "Pune"}
+show naam, shehar
+[pehla, ...baaki] = scores
+show pehla, baaki
+```
+
+```output
+100
+Asha Pune
+72 [95, 88]
+```
+
+Class aur `extends`:
+
+```lipi
+type Animal
+    naam: String
+
+    bolo()
+        return "{self.naam} kuch bolta hai"
+
+type Dog extends Animal
+    bolo()
+        return super.bolo() + ": bhau bhau!"
+
+show Dog("Moti").bolo()
+```
+
+```output
+Moti kuch bolta hai: bhau bhau!
+```
+
+Regex (pattern single quotes me likho):
+
+```lipi
+text = "Mera number 98765-43210 hai"
+show regex.test('\d{5}-\d{5}', text)
+show regex.replace('\d', text, "*")
+```
+
+```output
+true
+Mera number *****-***** hai
+```
+
+JavaScript ki aadat se galti ho jaaye to LiPi seedha batata hai:
+
+```lipi
+fruits = ["aam", "kela"]
+show fruits.includes("aam")
+```
+
+```output
+ERROR LIP1004: Arrays don't have "includes"
+
+main.lipi:2:13
+    show fruits.includes("aam")
+                ^^^^^^^^
+
+Hint: LiPi calls this contains: items.contains(x)
+```
+
+---
+
 ## Sach baat: JavaScript abhi kahan aage hai
 
 LiPi nayi language hai, aur JavaScript 30 saal purani. Kuch cheezon me JavaScript abhi aage hai, aur ye jaanna achha hai:
@@ -264,6 +354,8 @@ LiPi nayi language hai, aur JavaScript 30 saal purani. Kuch cheezon me JavaScrip
 - **Jobs aur community:** JavaScript ki community bahut badi hai. LiPi seekhne ke baad JavaScript samajhna bhi aasaan ho jaata hai, kyunki concepts (variables, functions, lists, objects, pages, APIs) wahi hain.
 - **Speed:** bahut bhaari calculations ke liye `lipi build --target node` wala JavaScript output tez chalta hai. LiPi ka faster engine roadmap me hai.
 - **Mobile/desktop apps:** LiPi ke roadmap me hain (Android, iOS, desktop).
+- **Kuch language features abhi nahi hain:** getters/setters, `static` aur private fields, generators (`yield`), regex me lookahead aur backreferences, aur `Symbol`/`Proxy`/`WeakMap` jaisi advanced cheezein. Inme se zyada tar ki zaroorat roz ke code me nahi padti, aur zaroorat ho to `js` module se JavaScript ki cheez use kar sakte ho.
+- **Timers:** `time.after`/`time.every` browser aur Node builds me aur `lipi run` me chalte hain, lekin `lipi run` wale web server (`server.start`) ke saath abhi nahi.
 
 **Iska matlab:** LiPi se shuru karo, jaldi seekho, asli apps banao, aur zaroorat pade to JavaScript ki duniya bhi tumhare haath me hai.
 

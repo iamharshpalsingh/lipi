@@ -105,7 +105,7 @@ fn spacing(prev: &Tok, prev2: Option<&Tok>, next: &Tok, prev_is_unary: bool) -> 
     if is_close(next) || matches!(next, Tok::Comma | Tok::Colon | Tok::Dot | Tok::QuestionDot | Tok::Question) {
         return "";
     }
-    if is_open(prev) || matches!(prev, Tok::Dot | Tok::QuestionDot) || prev_is_unary {
+    if is_open(prev) || matches!(prev, Tok::Dot | Tok::QuestionDot | Tok::Ellipsis) || prev_is_unary {
         return "";
     }
     if matches!(next, Tok::LParen | Tok::LBracket) && (ends_value(prev) || is_member_access(prev2)) {

@@ -131,6 +131,7 @@ fn run(args: Vec<String>) -> i32 {
 fn run_program(path: &Path, script_args: &[String]) -> i32 {
     let mut it = Interpreter::new();
     it.set_script_args(script_args);
+    it.color = color();
     match it.run_file(path).and_then(|_| it.serve(color())) {
         Ok(()) => 0,
         Err(RunError::Exit(code)) => code,

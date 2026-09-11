@@ -164,12 +164,13 @@ fn expr_name(k: &ExprKind) -> &'static str {
         ExprKind::Index { .. } => "Index",
         ExprKind::Lambda(_) => "Lambda",
         ExprKind::Await(_) => "Await",
+        ExprKind::Spread(_) => "Spread",
     }
 }
 
 const EXPRS: &[&str] = &[
     "Int", "Decimal", "Str", "Template", "Bool", "Null", "Ident", "List", "Object", "Unary", "Binary", "And", "Or", "Coalesce", "IfElse", "Range", "Call", "Field",
-    "Index", "Lambda", "Await",
+    "Index", "Lambda", "Await", "Spread",
 ];
 
 const BINARY: &[BinOp] = &[
@@ -183,7 +184,9 @@ const FEATURES: &[&str] = &[
     "feature: catch without a name", "feature: finally", "feature: match several patterns", "feature: match guard", "feature: match _", "feature: match range",
     "feature: match else", "feature: use", "feature: use as", "feature: from use", "feature: export definition", "feature: export names", "feature: method",
     "feature: const", "feature: async function", "feature: return type", "feature: typed parameter", "feature: default parameter", "feature: range step",
-    "feature: named argument", "feature: trailing block", "feature: trailing block with", "feature: ?.",
+    "feature: named argument", "feature: trailing block", "feature: trailing block with", "feature: ?.", "assign: object pattern",
+    "assign: array pattern", "feature: pattern rest", "feature: pattern skip", "feature: for pattern", "feature: rest parameter", "feature: spread in array",
+    "feature: spread in object", "feature: spread in call", "feature: extends", "feature: extends without a body",
 ];
 
 #[derive(Default)]
@@ -214,6 +217,19 @@ impl Walk {
         }
     }
 
+    fn pattern(&mut self, p: &Pattern) {
+        let (rest, skip) = match p {
+            Pattern::Object { rest, .. } => (rest.is_some(), false),
+            Pattern::List { items, rest, .. } => (rest.is_some(), items.iter().any(Option::is_none)),
+        };
+        if rest {
+            self.add("feature: pattern rest");
+        }
+        if skip {
+            self.add("feature: pattern skip");
+        }
+    }
+
     fn func(&mut self, f: &FuncDecl) {
         if f.is_async {
             self.add("feature: async function");
@@ -223,6 +239,9 @@ impl Walk {
             self.ty(t);
         }
         for p in &f.params {
+            if p.rest {
+                self.add("feature: rest parameter");
+            }
             if let Some(t) = &p.ty {
                 self.add("feature: typed parameter");
                 self.ty(t);
@@ -245,7 +264,12 @@ impl Walk {
                     Target::Name(_) => "assign: name",
                     Target::Field(..) => "assign: field",
                     Target::Index(..) => "assign: index",
+                    Target::Pattern(Pattern::Object { .. }) => "assign: object pattern",
+                    Target::Pattern(Pattern::List { .. }) => "assign: array pattern",
                 });
+                if let Target::Pattern(p) = target {
+                    self.pattern(p);
+                }
                 if let Some(op) = op {
                     self.add(format!("assign: {}=", op.symbol()));
                 }
@@ -261,7 +285,7 @@ impl Walk {
                         self.expr(obj);
                         self.expr(index);
                     }
-                    Target::Name(_) => {}
+                    Target::Name(_) | Target::Pattern(_) => {}
                 }
                 self.expr(value);
             }
@@ -286,9 +310,13 @@ impl Walk {
                 self.expr(count);
                 self.block(body);
             }
-            StmtKind::For { second, iter, body, .. } => {
+            StmtKind::For { second, iter, body, pattern, .. } => {
                 if second.is_some() {
                     self.add("feature: for with two names");
+                }
+                if let Some(p) = pattern {
+                    self.add("feature: for pattern");
+                    self.pattern(p);
                 }
                 self.expr(iter);
                 self.block(body);
@@ -351,6 +379,12 @@ impl Walk {
                 None => self.add("feature: export names"),
             },
             StmtKind::TypeDef(t) => {
+                if t.parent.is_some() {
+                    self.add("feature: extends");
+                    if t.fields.is_empty() && t.methods.is_empty() {
+                        self.add("feature: extends without a body");
+                    }
+                }
                 for f in &t.fields {
                     if let Some(ty) = &f.ty {
                         self.ty(ty);
@@ -388,8 +422,19 @@ impl Walk {
                     }
                 }
             }
-            ExprKind::List(items) => items.iter().for_each(|x| self.expr(x)),
-            ExprKind::Object(fields) => fields.iter().for_each(|(_, v)| self.expr(v)),
+            ExprKind::List(items) => {
+                if items.iter().any(|x| matches!(x.kind, ExprKind::Spread(_))) {
+                    self.add("feature: spread in array");
+                }
+                items.iter().for_each(|x| self.expr(x))
+            }
+            ExprKind::Object(fields) => {
+                if fields.iter().any(|(_, v)| matches!(v.kind, ExprKind::Spread(_))) {
+                    self.add("feature: spread in object");
+                }
+                fields.iter().for_each(|(_, v)| self.expr(v))
+            }
+            ExprKind::Spread(x) => self.expr(x),
             ExprKind::Unary(op, x) => {
                 self.add(format!("unary: {op:?}"));
                 self.expr(x);
@@ -419,6 +464,9 @@ impl Walk {
             ExprKind::Call { callee, args } => {
                 if args.iter().any(|a| a.name.is_some()) {
                     self.add("feature: named argument");
+                }
+                if args.iter().any(|a| matches!(a.value.kind, ExprKind::Spread(_))) {
+                    self.add("feature: spread in call");
                 }
                 if let Some(ExprKind::Lambda(f)) = args.last().map(|a| &a.value.kind) {
                     if f.name.text == "<block>" {

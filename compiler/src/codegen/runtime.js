@@ -7,7 +7,9 @@
 // ----- values -----------------------------------------------------------------------
 class Dec { constructor(v) { this.v = v; } }
 class LObj { constructor(f, t, m) { this.f = f || new Map(); this.t = t || null; this.m = m || null; } }
-class LType { constructor(name, fields, methods) { this.name = name; this.fields = fields; this.methods = methods; } }
+/// A `type`. `parent` (for `type Admin extends User`) is looked up when first
+/// needed, so a type may extend one defined later in the file; `ps` is its site.
+class LType { constructor(name, fields, methods, parent, ps) { this.name = name; this.fields = fields; this.methods = methods; this.parent = parent || null; this.ps = ps; this.chain = null; this.all = null; } }
 /// A JavaScript object reached through the `js` module.
 class JsRef { constructor(v) { this.v = v; } }
 class LipiError extends Error {
@@ -415,7 +417,7 @@ function matches(v, t) {
     case "Function": return typeof v === "function" || v instanceof LType;
     case "Task": return v instanceof Promise;
     case "JsObject": return v instanceof JsRef;
-    default: return v instanceof LObj && v.t !== null && v.t.name === t;
+    default: return v instanceof LObj && v.t !== null && typeChain(v.t).some((x) => x.name === t);
   }
 }
 
@@ -424,22 +426,79 @@ function $chk(v, t, name, s) {
   $fail("LIP2002", `"${name}" should be ${withArticle(typeStr(t))}, but this is ${withArticle(typeName(v))}`, s, `"${name}" was declared as ${typeStr(t)}.`);
 }
 
-function $type(name, fields, methods) { return new LType(name, fields, methods); }
+function $type(name, fields, methods, parent, ps) {
+  const t = new LType(name, fields, methods, parent, ps);
+  for (const m of Object.values(methods)) m.$owner = t;
+  return t;
+}
+
+/// A type and the types it extends, nearest first.
+function typeChain(t) {
+  if (t.chain) return t.chain;
+  const chain = [t];
+  let cur = t;
+  while (cur.parent) {
+    const p = cur.parent();
+    if (!(p instanceof LType)) $fail("LIP2001", `"${cur.name}" can't extend "${siteOf(cur.ps).n}": that's ${withArticle(typeName(p))}, not a type`, cur.ps);
+    if (chain.includes(p)) $fail("LIP2001", `"${t.name}" extends itself through "${cur.name}"`, cur.ps, "Types can't extend each other in a circle.");
+    chain.push(p);
+    cur = p;
+  }
+  t.chain = chain;
+  return chain;
+}
+
+/// Every field of a type, the parent's first; a field declared again keeps its place.
+function allFields(t) {
+  if (t.all) return t.all;
+  const out = [];
+  for (const x of typeChain(t).slice().reverse()) {
+    for (const f of x.fields) {
+      const i = out.findIndex((g) => g.n === f.n);
+      if (i >= 0) out[i] = f;
+      else out.push(f);
+    }
+  }
+  t.all = out;
+  return out;
+}
+
+function findMethod(t, name) {
+  for (const x of typeChain(t)) if (Object.prototype.hasOwnProperty.call(x.methods, name)) return x.methods[name];
+  return undefined;
+}
+
+function methodNames(t) {
+  const out = [];
+  for (const x of typeChain(t)) for (const k of Object.keys(x.methods)) if (!out.includes(k)) out.push(k);
+  return out;
+}
+
+/// `super` inside a method of `owner`: the methods of the types it extends, bound to the same object.
+function superOf(obj, owner) {
+  const chain = typeChain(owner).slice(1);
+  const f = new Map();
+  for (const x of chain) for (const [k, impl] of Object.entries(x.methods)) if (!f.has(k)) f.set(k, bindMethod(obj, k, impl));
+  const o = new LObj(f);
+  o.sup = chain[0].name;
+  return o;
+}
 
 function construct(t, pos, named, s) {
-  const list = () => t.fields.map((f) => f.n).join(", ");
-  if (pos.length > t.fields.length) {
-    const n = t.fields.length;
+  const all = allFields(t);
+  const list = () => all.map((f) => f.n).join(", ");
+  if (pos.length > all.length) {
+    const n = all.length;
     $fail("LIP2003", `"${t.name}" has ${n} field${n === 1 ? "" : "s"}, but ${pos.length} values were given`, s, `Its fields are: ${list()}`);
   }
   const values = pos.slice();
   if (named) for (const [k, v] of Object.entries(named)) {
-    const i = t.fields.findIndex((f) => f.n === k);
-    if (i < 0) $fail("LIP1007", `"${t.name}" has no field "${k}"`, s, didYouMean(k, t.fields.map((f) => f.n)) || `Its fields are: ${list()}`);
+    const i = all.findIndex((f) => f.n === k);
+    if (i < 0) $fail("LIP1007", `"${t.name}" has no field "${k}"`, s, didYouMean(k, all.map((f) => f.n)) || `Its fields are: ${list()}`);
     values[i] = v;
   }
   const fields = new Map();
-  t.fields.forEach((f, i) => {
+  all.forEach((f, i) => {
     let v = values[i];
     if (v === undefined) {
       if (f.d) v = f.d();
@@ -455,7 +514,9 @@ function construct(t, pos, named, s) {
 // ----- functions and calls -----------------------------------------------------------
 function $fn(meta, impl) { impl.$m = meta; return impl; }
 function nat(name, f) { f.$native = name; return f; }
-const sig = (m) => `${m.n}(${m.p.map((p) => p[0]).join(", ")})`;
+const sig = (m) => `${m.n}(${m.p.map((p) => (p[3] ? "..." : "") + p[0]).join(", ")})`;
+/// The position of a `...rest` parameter, or -1.
+const restAt = (m) => (m.p.length && m.p[m.p.length - 1][3] ? m.p.length - 1 : -1);
 const fname = (m) => (m.l ? "this function" : `"${m.n}"`);
 
 function $call(f, pos, named, s) {
@@ -477,19 +538,22 @@ function callFn(f, pos, named, s) {
     delete named.key;
   }
   if ($rt.frames.length >= MAX_DEPTH) $fail("LIP5005", `too much recursion: ${fname(m)} called itself too many times`, s, "Make sure the recursion has a case where it stops calling itself.");
-  if (pos.length > params.length) {
+  const rest = restAt(m);
+  const fixed = rest < 0 ? params.length : rest;
+  if (pos.length > fixed && rest < 0) {
     const n = params.length;
     $fail("LIP2003", `${fname(m)} takes ${n} argument${n === 1 ? "" : "s"}, but ${pos.length} were given`, s, `It is defined as ${sig(m)}.`);
   }
-  const args = pos.slice();
-  while (args.length < params.length) args.push(undefined);
+  const args = pos.slice(0, fixed);
+  while (args.length < fixed) args.push(undefined);
   if (named) for (const [k, v] of Object.entries(named)) {
-    const i = params.findIndex((p) => p[0] === k);
+    const i = params.findIndex((p, j) => p[0] === k && j !== rest);
     if (i < 0) $fail("LIP1007", `${fname(m)} has no parameter named "${k}"`, s, didYouMean(k, params.map((p) => p[0])) || `It is defined as ${sig(m)}.`);
     if (args[i] !== undefined) $fail("LIP2003", `the argument "${k}" was given twice`, s);
     args[i] = v;
   }
-  for (let i = 0; i < params.length; i++) {
+  if (rest >= 0) args.push(pos.slice(fixed));
+  for (let i = 0; i < fixed; i++) {
     const [pn, hasDefault, ty] = params[i];
     if (args[i] === undefined) {
       if (!hasDefault) $fail("LIP2003", `missing argument "${pn}" for ${fname(m)}`, s, `It is defined as ${sig(m)}.`);
@@ -522,7 +586,7 @@ function callFn(f, pos, named, s) {
 
 /// Call a callback, dropping arguments it doesn't declare (like `lipi run`).
 function cb(f, args, s) {
-  if (typeof f === "function" && f.$m) args = args.slice(0, f.$m.p.length);
+  if (typeof f === "function" && f.$m && restAt(f.$m) < 0) args = args.slice(0, f.$m.p.length);
   return $call(f, args, null, s);
 }
 
@@ -534,7 +598,50 @@ function bound(recv, name) {
 
 function bindMethod(obj, name, impl) {
   const m = impl.$m;
+  if (m.sp) return $fn({ ...m }, (...args) => impl(obj, superOf(obj, impl.$owner), ...args));
   return $fn({ ...m }, (...args) => impl(obj, ...args));
+}
+
+// ----- spread and patterns ------------------------------------------------------------
+function spreadError(into, v, s) {
+  const hint = into === "an Object" ? 'Only an Object\'s fields can be spread into { }, for example: {...defaults, color: "red"}' : "Only Arrays and Strings can be spread here, for example: [...first, ...second]";
+  $fail("LIP2001", `cannot spread ${withArticle(typeName(v))} into ${into}`, s, hint);
+}
+
+/// `...v` in an Array literal (into 0) or in a call's arguments (into 1).
+function $sp(v, s, into) {
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") return Array.from(v);
+  spreadError(into ? "the arguments" : "an Array", v, s);
+}
+
+/// `...v` in an Object literal: its fields as [key, value] pairs.
+function $spo(v, s) {
+  if (v instanceof LObj && !v.m) return Array.from(v.f.entries());
+  spreadError("an Object", v, s);
+}
+
+/// `{a, b} = v`: v must have fields.
+function $dobj(v, s) {
+  if (v instanceof LObj || v instanceof JsRef) return;
+  $fail("LIP2001", `a {...} pattern needs an Object, but this is ${withArticle(typeName(v))}`, s, "Patterns in { } take fields from an Object, for example: {name, age} = user");
+}
+
+/// `[a, b] = v`: v must be an Array with at least `n` items.
+function $dlist(v, n, s) {
+  if (!Array.isArray(v)) $fail("LIP2001", `a [...] pattern needs an Array, but this is ${withArticle(typeName(v))}`, s, "Patterns in [ ] take items from an Array, for example: [first, second] = items");
+  if (v.length < n) $fail("LIP5001", `this pattern needs ${n} item${n === 1 ? "" : "s"}, but the Array has ${v.length}`, s, "Check the Array's length first, or take fewer items.");
+}
+
+/// `{a, ...others} = v`: the fields the pattern didn't name.
+function $drest(v, keys) {
+  const m = new Map();
+  if (v instanceof JsRef) {
+    for (const k of Object.keys(v.v)) if (!keys.includes(k)) m.set(k, fromJs(v.v[k], v.v));
+  } else {
+    for (const [k, x] of v.f) if (!keys.includes(k)) m.set(k, x);
+  }
+  return new LObj(m);
 }
 
 // ----- tasks -----------------------------------------------------------------------
@@ -547,12 +654,29 @@ function track(p) {
 }
 
 // ----- fields, indexes and methods ------------------------------------------------------
-const STRING_MEMBERS = ["length", "upper", "lower", "trim", "trimStart", "trimEnd", "split", "contains", "startsWith", "endsWith", "replace", "indexOf", "slice", "repeat", "chars", "lines", "isEmpty", "padStart", "padEnd", "reverse", "toNumber"];
-const LIST_MEMBERS = ["length", "first", "last", "push", "pop", "insert", "removeAt", "remove", "contains", "indexOf", "join", "map", "filter", "reduce", "each", "find", "any", "all", "sort", "sortBy", "reverse", "slice", "sum", "min", "max", "isEmpty", "copy", "unique", "flat", "count"];
+const STRING_MEMBERS = ["length", "upper", "lower", "trim", "trimStart", "trimEnd", "split", "contains", "startsWith", "endsWith", "replace", "indexOf", "slice", "repeat", "chars", "lines", "isEmpty", "padStart", "padEnd", "reverse", "toNumber", "lastIndexOf"];
+const LIST_MEMBERS = ["length", "first", "last", "push", "pop", "insert", "removeAt", "remove", "contains", "indexOf", "join", "map", "filter", "reduce", "each", "find", "any", "all", "sort", "sortBy", "reverse", "slice", "sum", "min", "max", "isEmpty", "copy", "unique", "flat", "count", "findIndex", "findLast", "flatMap", "shift", "unshift", "groupBy", "lastIndexOf"];
 const OBJECT_MEMBERS = ["keys", "values", "entries", "has", "get", "remove", "copy", "length", "isEmpty"];
-const NUMBER_MEMBERS = ["round", "floor", "ceil", "abs", "toString"];
+const NUMBER_MEMBERS = ["round", "floor", "ceil", "abs", "toString", "toFixed"];
 const TASK_MEMBERS = ["cancel", "isDone"];
-const STD_MODULES = ["math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database"];
+const STD_MODULES = ["math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database", "regex", "encoding"];
+/// Method names from JavaScript that LiPi spells differently (the same as lipi_compiler::suggest).
+const FOREIGN_MEMBERS = new Map([
+  ["includes", "LiPi calls this contains: items.contains(x)"], ["has", "LiPi calls this contains: items.contains(x)"], ["contain", "LiPi calls this contains: items.contains(x)"],
+  ["forEach", "LiPi calls this each: items.each(x => show x), or use a for loop."],
+  ["some", "LiPi calls this any: items.any(x => x > 3)"], ["every", "LiPi calls this all: items.all(x => x > 3)"],
+  ["toUpperCase", "LiPi calls this upper: name.upper()"], ["toLowerCase", "LiPi calls this lower: name.lower()"],
+  ["substring", "LiPi calls this slice: text.slice(0, 5)"], ["substr", "LiPi calls this slice: text.slice(0, 5)"],
+  ["charAt", "Use [ ] to get one item or character: text[0], items[-1] (the last one)."], ["at", "Use [ ] to get one item or character: text[0], items[-1] (the last one)."],
+  ["concat", "Join two Arrays or two Strings with +: first + second, or spread them: [...first, ...second]"],
+  ["replaceAll", 'LiPi\'s replace already replaces every match: text.replace("a", "b")'],
+  ["trimLeft", "LiPi calls this trimStart."], ["trimRight", "LiPi calls this trimEnd."],
+  ["size", "Use the .length property."], ["len", "Use the .length property."], ["count", "Use the .length property."],
+  ["toSorted", "LiPi's sort already returns a new Array: items.sort()"], ["toReversed", "LiPi's reverse already returns a new Array: items.reverse()"],
+  ["splice", "Use insert(position, item) to add and removeAt(position) to remove."],
+  ["match", "Use the regex module: regex.find(pattern, text), regex.findAll(...), regex.test(...)"], ["matchAll", "Use the regex module: regex.find(pattern, text), regex.findAll(...), regex.test(...)"],
+  ["search", "Use the regex module: regex.find(pattern, text), regex.findAll(...), regex.test(...)"], ["test", "Use the regex module: regex.find(pattern, text), regex.findAll(...), regex.test(...)"],
+]);
 
 function membersFor(v) {
   if (typeof v === "string") return ["String", STRING_MEMBERS];
@@ -565,7 +689,7 @@ function membersFor(v) {
 }
 
 function unknownMember(ty, name, s, members) {
-  $fail("LIP1004", `${ty}s don't have "${name}"`, s, didYouMean(name, members) || `Available: ${members.join(", ")}`);
+  $fail("LIP1004", `${ty}s don't have "${name}"`, s, FOREIGN_MEMBERS.get(name) || didYouMean(name, members) || `Available: ${members.join(", ")}`);
 }
 
 function property(v, name) {
@@ -585,8 +709,9 @@ function nullHint(site, what) {
 
 function missingField(o, name, s) {
   const available = Array.from(o.f.keys());
-  if (o.t) available.push(...Object.keys(o.t.methods));
+  if (o.t) available.push(...methodNames(o.t));
   const suggestion = didYouMean(name, available);
+  if (o.sup) $fail("LIP5004", `"${o.sup}" has no method "${name}"`, s, suggestion || `Available: ${available.join(", ")}`);
   if (o.m && STD_MODULES.includes(o.m)) $fail("LIP1004", `the ${o.m} module has no "${name}"`, s, suggestion || `Available: ${available.join(", ")}`);
   if (o.m) $fail("LIP3003", `module "${o.m}" doesn't export "${name}"`, s, suggestion || `If "${name}" is defined in ${o.m}.lipi, add: export ${name}`);
   if (o.t) $fail("LIP5004", `"${o.t.name}" has no field or method "${name}"`, s, suggestion || `Available: ${available.join(", ")}`);
@@ -600,7 +725,7 @@ function $get(obj, name, s, optional) {
   }
   if (obj instanceof LObj) {
     if (obj.f.has(name)) return obj.f.get(name);
-    if (obj.t && obj.t.methods[name]) return bindMethod(obj, name, obj.t.methods[name]);
+    if (obj.t) { const m = findMethod(obj.t, name); if (m) return bindMethod(obj, name, m); }
     if (!obj.m) {
       if (name === "length") return obj.f.size;
       if (OBJECT_MEMBERS.includes(name)) return bound(obj, name);
@@ -626,9 +751,9 @@ function $set(obj, name, v, s) {
   if (obj instanceof LObj) {
     if (obj.m) $fail("LIP5008", "modules can't be changed from outside", s);
     if (obj.t) {
-      const f = obj.t.fields.find((x) => x.n === name);
+      const f = allFields(obj.t).find((x) => x.n === name);
       if (!f) {
-        const names = obj.t.fields.map((x) => x.n);
+        const names = allFields(obj.t).map((x) => x.n);
         $fail("LIP5004", `"${obj.t.name}" has no field "${name}"`, s, didYouMean(name, names) || `Its fields are: ${names.join(", ")}`);
       }
       if (f.t) $chk(v, f.t, name, siteOf(s).V ?? s);
@@ -778,6 +903,7 @@ function stringMethod(str, name, a, n, s) {
     }
     case "reverse": return chars().reverse().join("");
     case "toNumber": return toNumber(str);
+    case "lastIndexOf": { const i = str.lastIndexOf(argStr(name, a, n, 0, "text", s)); return i < 0 ? null : Array.from(str.slice(0, i)).length; }
   }
   return undefined;
 }
@@ -818,7 +944,18 @@ function listMethod(l, name, a, n, s) {
       const f = argFn(name, a, n, 0, "function", s);
       return l.slice().filter((x) => expectBool(cb(f, [x], s), s, what)).length;
     }
-    case "sort": { const items = l.slice(); checkSortable(items, s); return items.sort(compareValues); }
+    case "sort": {
+      const items = l.slice();
+      const compare = arg(a, n, 0, "compare");
+      if (compare === undefined || compare === null) { checkSortable(items, s); return items.sort(compareValues); }
+      const f = argFn(name, a, n, 0, "compare", s);
+      return items.sort((x, y) => {
+        const r = cb(f, [x, y], s);
+        if (!isNum(r)) $fail("LIP5008", `the function given to sort() must return a number, but it returned ${withArticle(typeName(r))}`, s, "Return a negative number when a comes first, a positive one when b comes first, and 0 when they're equal: items.sort((a, b) => a - b)");
+        const d = nv(r);
+        return d < 0 ? -1 : d > 0 ? 1 : 0;
+      });
+    }
     case "sortBy": {
       const f = argFn(name, a, n, 0, "function", s);
       const pairs = l.slice().map((x) => [cb(f, [x], s), x]);
@@ -847,8 +984,40 @@ function listMethod(l, name, a, n, s) {
     case "copy": return l.slice();
     case "unique": { const out = []; for (const x of l) if (!out.some((y) => eq(x, y))) out.push(x); return out; }
     case "flat": return l.flatMap((x) => (Array.isArray(x) ? x : [x]));
+    case "findIndex": { const f = argFn(name, a, n, 0, "function", s); const c = l.slice(); for (let i = 0; i < c.length; i++) if (expectBool(cb(f, [c[i], i], s), s, what)) return i; return null; }
+    case "findLast": { const f = argFn(name, a, n, 0, "function", s); const c = l.slice(); for (let i = c.length - 1; i >= 0; i--) if (expectBool(cb(f, [c[i], i], s), s, what)) return c[i]; return null; }
+    case "flatMap": {
+      const f = argFn(name, a, n, 0, "function", s);
+      const out = [];
+      l.slice().forEach((x, i) => { const r = cb(f, [x, i], s); if (Array.isArray(r)) out.push(...r); else out.push(r); });
+      return out;
+    }
+    case "shift": if (l.length === 0) $fail("LIP5001", "cannot shift from an empty Array", s, "Check .isEmpty() first."); { const v = l.shift(); $rt.changed(); return v; }
+    case "unshift": if (a.length === 0) $fail("LIP5008", "unshift() needs an item to add", s); l.unshift(...a); $rt.changed(); return null;
+    case "groupBy": {
+      const f = argFn(name, a, n, 0, "function", s);
+      const groups = new Map();
+      for (const x of l.slice()) {
+        const k = cb(f, [x], s);
+        if (typeof k !== "string" && !isNum(k) && typeof k !== "boolean") $fail("LIP5008", `the function given to groupBy() must return a String, a number or a Boolean, but it returned ${withArticle(typeName(k))}`, s, "Its result names the group, for example: people.groupBy(p => p.city)");
+        const key = display(k);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(x);
+      }
+      return new LObj(groups);
+    }
+    case "lastIndexOf": { const item = need(name, a, n, 0, "item", s); for (let i = l.length - 1; i >= 0; i--) if (eq(l[i], item)) return i; return null; }
   }
   return undefined;
+}
+
+/// n.toFixed(digits), like JavaScript's: halfway cases round away from zero.
+function toFixed(x, d, s) {
+  if (d < 0 || d > 100) $fail("LIP5008", "toFixed() needs digits from 0 to 100", s);
+  if (Number.isNaN(x)) return "NaN";
+  if (!Number.isFinite(x)) return x > 0 ? "infinity" : "-infinity";
+  if (Math.abs(x) >= 1e21) $fail("LIP5008", "toFixed() works with numbers below 1e21", s, "For huge numbers, use toString(x).");
+  return (x === 0 ? 0 : x).toFixed(d);
 }
 
 function numberMethod(v, name, a, n, s) {
@@ -865,6 +1034,7 @@ function numberMethod(v, name, a, n, s) {
     case "ceil": return isInt(v) ? v : whole(Math.ceil(x));
     case "abs": return isInt(v) ? (v < 0 ? $neg(v, s) : v) : new Dec(Math.abs(x));
     case "toString": return display(v);
+    case "toFixed": return toFixed(x, optInt(name, a, n, 0, "digits", s) ?? 0, s);
   }
   return undefined;
 }
@@ -905,7 +1075,7 @@ function $mc(obj, name, pos, named, s, optional) {
   }
   if (obj instanceof LObj) {
     if (obj.f.has(name)) return $call(obj.f.get(name), pos, named, s);
-    if (obj.t && obj.t.methods[name]) return callFn(bindMethod(obj, name, obj.t.methods[name]), pos, named, s);
+    if (obj.t) { const m = findMethod(obj.t, name); if (m) return callFn(bindMethod(obj, name, m), pos, named, s); }
     if (!obj.m) {
       if (name === "length") $fail("LIP5008", `"${name}" is a property, not a method`, s, `Write it without parentheses: .${name}`);
       const r = objectMethod(obj, name, pos, named, s);
@@ -1019,6 +1189,177 @@ function sleepTask(ms) { return track(new Promise((resolve) => setTimeout(() => 
 function randomBytes(n) { const b = new Uint8Array(n); crypto.getRandomValues(b); return b; }
 const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
+/// time.after(ms) and time.every(ms) with a block: run it later (once, or again and again).
+/// The result's stop() cancels it.
+function timer(repeat) {
+  const fn = repeat ? "every" : "after";
+  return (a, n, s) => {
+    const ms = Math.max(0, argNum(fn, a, n, 0, "milliseconds", s));
+    const f = argFn(fn, a, n, 1, "block", s);
+    let id = null;
+    const stop = () => { if (id !== null) { if (repeat) clearInterval(id); else clearTimeout(id); id = null; } };
+    const run = () => {
+      if (!repeat) id = null;
+      try {
+        const r = cb(f, [], s);
+        if (r instanceof Promise) r.catch((e) => { stop(); $uncaught(e); });
+      } catch (e) {
+        stop();
+        $uncaught(e);
+      }
+      $rt.changed();
+    };
+    id = repeat ? setInterval(run, ms) : setTimeout(run, ms);
+    return $obj([["stop", nat("stop", () => { stop(); return null; })]]);
+  };
+}
+
+// ----- regex ----------------------------------------------------------------------------
+// LiPi patterns mean the same in every engine: \d and \w are ASCII, `.` doesn't
+// match line breaks, and lookaround and backreferences aren't available.
+// Positions are counted in characters, like everywhere else in LiPi.
+const REGEX_UNSUPPORTED = /\(\?<?[=!]|\\[1-9]|\\k</;
+function lipiRegex(fn, pattern, n, s) {
+  if (REGEX_UNSUPPORTED.test(pattern)) $fail("LIP5008", "LiPi patterns can't use lookahead, lookbehind or backreferences", s, "Match the text more simply, or check the parts separately.");
+  let flags = "gu";
+  if (n && n.ignoreCase !== undefined && $bool(n.ignoreCase, s)) flags += "i";
+  if (n && n.multiline !== undefined && $bool(n.multiline, s)) flags += "m";
+  try { return new RegExp(pattern, flags); }
+  catch { $fail("LIP5008", `"${pattern}" isn't a valid pattern`, s, "Check the brackets and backslashes. To match a symbol like . or ( itself, put \\ before it: \\. or \\("); }
+}
+
+/// Every match, like the interpreter finds them: after a non-empty match, an
+/// empty match at the same place is skipped.
+function regexMatches(re, text) {
+  const out = [];
+  let prevEnd = -1, chars = 0, at = 0;
+  for (const m of text.matchAll(re)) {
+    const end = m.index + m[0].length;
+    if (m[0] === "" && m.index === prevEnd) continue;
+    chars += Array.from(text.slice(at, m.index)).length;
+    at = m.index;
+    out.push({ m, index: chars, start: m.index, end });
+    prevEnd = m[0] === "" ? -1 : end;
+  }
+  return out;
+}
+
+function matchObject(x) {
+  const groups = [];
+  for (let i = 1; i < x.m.length; i++) groups.push(x.m[i] === undefined ? null : x.m[i]);
+  const named = new Map();
+  if (x.m.groups) for (const [k, v] of Object.entries(x.m.groups)) named.set(k, v === undefined ? null : v);
+  return $obj([["text", x.m[0]], ["index", x.index], ["groups", groups], ["named", new LObj(named)]]);
+}
+
+/// "$1", "$<name>", "$&" and "$$" in a replacement.
+function expandReplacement(rep, x) {
+  let out = "";
+  for (let i = 0; i < rep.length; i++) {
+    const c = rep[i];
+    if (c !== "$" || i + 1 >= rep.length) { out += c; continue; }
+    const d = rep[i + 1];
+    if (d === "$") { out += "$"; i++; }
+    else if (d === "&") { out += x.m[0]; i++; }
+    else if (d === "<") {
+      const close = rep.indexOf(">", i + 2);
+      const name = close < 0 ? null : rep.slice(i + 2, close);
+      if (name !== null && x.m.groups && name in x.m.groups) { out += x.m.groups[name] ?? ""; i = close; }
+      else out += c;
+    } else if (d >= "0" && d <= "9") {
+      const two = rep.slice(i + 1, i + 3);
+      if (/^\d\d$/.test(two) && Number(two) >= 1 && Number(two) < x.m.length) { out += x.m[Number(two)] ?? ""; i += 2; }
+      else if (Number(d) >= 1 && Number(d) < x.m.length) { out += x.m[Number(d)] ?? ""; i++; }
+      else out += c;
+    } else out += c;
+  }
+  return out;
+}
+
+function installRegex() {
+  const text = (fn, a, n, s) => argStr(fn, a, n, 1, "text", s);
+  const re = (fn, a, n, s) => lipiRegex(fn, argStr(fn, a, n, 0, "pattern", s), n, s);
+  $g.regex = module("regex", {
+    test: nat("test", (a, n, s) => { const r = re("test", a, n, s); return regexMatches(r, text("test", a, n, s)).length > 0; }),
+    find: nat("find", (a, n, s) => { const r = re("find", a, n, s); const all = regexMatches(r, text("find", a, n, s)); return all.length ? matchObject(all[0]) : null; }),
+    findAll: nat("findAll", (a, n, s) => { const r = re("findAll", a, n, s); return regexMatches(r, text("findAll", a, n, s)).map(matchObject); }),
+    replace: nat("replace", (a, n, s) => {
+      const r = re("replace", a, n, s), t = text("replace", a, n, s);
+      const rep = need("replace", a, n, 2, "replacement", s);
+      if (typeof rep !== "string" && typeof rep !== "function") wrong("replace", "replacement", "String", rep, s);
+      let out = "", last = 0;
+      for (const x of regexMatches(r, t)) {
+        out += t.slice(last, x.start);
+        if (typeof rep === "string") out += expandReplacement(rep, x);
+        else {
+          const v = cb(rep, [matchObject(x)], s);
+          if (typeof v !== "string") $fail("LIP5008", `the function given to regex.replace() must return a String, but it returned ${withArticle(typeName(v))}`, s, 'For example: regex.replace("\\\\d+", text, m => "<{m.text}>")');
+          out += v;
+        }
+        last = x.end;
+      }
+      return out + t.slice(last);
+    }),
+    split: nat("split", (a, n, s) => {
+      const r = re("split", a, n, s), t = text("split", a, n, s);
+      const out = [];
+      let last = 0;
+      for (const x of regexMatches(r, t)) { out.push(t.slice(last, x.start)); last = x.end; }
+      out.push(t.slice(last));
+      return out;
+    }),
+  });
+}
+
+// ----- encoding -------------------------------------------------------------------------
+function installEncoding() {
+  const bytesOf = (text) => new TextEncoder().encode(text);
+  const textOf = (bytes, s, what) => {
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+    catch { $fail("LIP5008", `${what} isn't valid UTF-8 text`, s, "It decodes to bytes that aren't text."); }
+  };
+  const URL_SAFE = /^[A-Za-z0-9\-_.!~*'()]$/;
+  $g.encoding = module("encoding", {
+    base64Encode: nat("base64Encode", (a, n, s) => { let bin = ""; for (const b of bytesOf(argStr("base64Encode", a, n, 0, "text", s))) bin += String.fromCharCode(b); return btoa(bin); }),
+    base64Decode: nat("base64Decode", (a, n, s) => {
+      let t = argStr("base64Decode", a, n, 0, "text", s).replace(/[\t\n\f\r ]/g, "");
+      if (t.length % 4 === 0) t = t.replace(/={1,2}$/, "");
+      if (t.length % 4 === 1 || !/^[A-Za-z0-9+/]*$/.test(t)) $fail("LIP5008", "this isn't valid Base64", s, 'Base64 uses the letters A-Z and a-z, digits, + and /, with = at the end, like "SGVsbG8=".');
+      const bin = atob(t);
+      return textOf(Uint8Array.from(bin, (c) => c.charCodeAt(0)), s, "the decoded Base64");
+    }),
+    urlEncode: nat("urlEncode", (a, n, s) => {
+      let out = "";
+      for (const c of argStr("urlEncode", a, n, 0, "text", s)) {
+        if (URL_SAFE.test(c)) out += c;
+        else for (const b of bytesOf(c)) out += "%" + b.toString(16).toUpperCase().padStart(2, "0");
+      }
+      return out;
+    }),
+    urlDecode: nat("urlDecode", (a, n, s) => {
+      const t = Array.from(argStr("urlDecode", a, n, 0, "text", s));
+      const bytes = [];
+      for (let i = 0; i < t.length; i++) {
+        if (t[i] === "%") {
+          const h = t.slice(i + 1, i + 3).join("");
+          if (!/^[0-9A-Fa-f]{2}$/.test(h)) $fail("LIP5008", "this isn't valid URL encoding", s, "A % must be followed by two hex digits, like %20 for a space.");
+          bytes.push(parseInt(h, 16));
+          i += 2;
+        } else for (const b of bytesOf(t[i])) bytes.push(b);
+      }
+      return textOf(new Uint8Array(bytes), s, "the decoded URL text");
+    }),
+    hexEncode: nat("hexEncode", (a, n, s) => hex(bytesOf(argStr("hexEncode", a, n, 0, "text", s)))),
+    hexDecode: nat("hexDecode", (a, n, s) => {
+      const t = argStr("hexDecode", a, n, 0, "text", s);
+      if (t.length % 2 !== 0 || !/^[0-9A-Fa-f]*$/.test(t)) $fail("LIP5008", "this isn't valid hex", s, 'Hex uses pairs of the digits 0-9 and a-f, like "48656c6c6f".');
+      const bytes = new Uint8Array(t.length / 2);
+      for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(t.slice(i * 2, i * 2 + 2), 16);
+      return textOf(bytes, s, "the decoded hex");
+    }),
+  });
+}
+
 const $g = {};
 function installStd() {
   const def = (name, f) => { $g[name] = nat(name, f); };
@@ -1059,6 +1400,10 @@ function installStd() {
     for (const v of items) if (!isNum(v)) $fail("LIP5008", `${fn}() works with numbers, but got ${withArticle(typeName(v))}`, s);
     return items;
   };
+  // Bit operations work on 64-bit Integers, like the interpreter's.
+  const big = (fn, a, n, i, name, s) => { const v = need(fn, a, n, i, name, s); if (!isInt(v)) wrong(fn, name, "Integer", v, s); return BigInt(v); };
+  const i64 = (b) => norm(BigInt.asIntN(64, b), null);
+  const shiftBits = (fn, a, n, s) => { const k = argInt(fn, a, n, 1, "bits", s); if (k < 0 || k > 63) $fail("LIP5008", `${fn}() needs bits from 0 to 63`, s); return k; };
   $g.math = module("math", {
     pi: new Dec(Math.PI), e: new Dec(Math.E), infinity: new Dec(Infinity),
     sqrt: nat("sqrt", decimal(Math.sqrt)), sin: nat("sin", decimal(Math.sin)), cos: nat("cos", decimal(Math.cos)), tan: nat("tan", decimal(Math.tan)),
@@ -1082,6 +1427,13 @@ function installStd() {
     }),
     min: nat("min", (a, n, s) => { const v = numbers("min", a, s); return v.length ? v.reduce((x, y) => (nv(y) < nv(x) ? y : x)) : null; }),
     max: nat("max", (a, n, s) => { const v = numbers("max", a, s); return v.length ? v.reduce((x, y) => (nv(y) > nv(x) ? y : x)) : null; }),
+    trunc: nat("trunc", toInt(Math.trunc)),
+    bitAnd: nat("bitAnd", (a, n, s) => i64(big("bitAnd", a, n, 0, "a", s) & big("bitAnd", a, n, 1, "b", s))),
+    bitOr: nat("bitOr", (a, n, s) => i64(big("bitOr", a, n, 0, "a", s) | big("bitOr", a, n, 1, "b", s))),
+    bitXor: nat("bitXor", (a, n, s) => i64(big("bitXor", a, n, 0, "a", s) ^ big("bitXor", a, n, 1, "b", s))),
+    bitNot: nat("bitNot", (a, n, s) => i64(~big("bitNot", a, n, 0, "a", s))),
+    shiftLeft: nat("shiftLeft", (a, n, s) => i64(big("shiftLeft", a, n, 0, "x", s) << BigInt(shiftBits("shiftLeft", a, n, s)))),
+    shiftRight: nat("shiftRight", (a, n, s) => i64(big("shiftRight", a, n, 0, "x", s) >> BigInt(shiftBits("shiftRight", a, n, s)))),
     random: nat("random", () => new Dec(random())),
     randomInt: nat("randomInt", (a, n, s) => {
       const lo = argInt("randomInt", a, n, 0, "min", s), hi = argInt("randomInt", a, n, 1, "max", s);
@@ -1099,7 +1451,11 @@ function installStd() {
     now: nat("now", () => Date.now()),
     date: nat("date", (a, n, s) => { const c = civil(timeArg(a, n, s)); return $obj([["year", c.y], ["month", c.mo], ["day", c.d], ["hour", c.h], ["minute", c.mi], ["second", c.s], ["weekday", DAYS[c.wd]]]); }),
     iso: nat("iso", (a, n, s) => { const c = civil(timeArg(a, n, s)); return `${String(c.y).padStart(4, "0")}-${pad2(c.mo)}-${pad2(c.d)}T${pad2(c.h)}:${pad2(c.mi)}:${pad2(c.s)}Z`; }),
+    after: nat("after", timer(false)),
+    every: nat("every", timer(true)),
   });
+  installRegex();
+  installEncoding();
   const request = async (method, url, body, options, s) => {
     if (!/^https?:\/\//.test(url) && $rt.target === "node") $fail("LIP5000", `"${url}" isn't a full web address`, s, 'HTTP requests need a full URL that starts with https:// or http://, like "https://api.example.com/users".');
     const headers = {};

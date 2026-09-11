@@ -1,0 +1,2 @@
+items = [1, 2, 3]
+show items.includes(2)

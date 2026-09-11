@@ -326,7 +326,10 @@ impl<'a> Parser<'a> {
                     .with_hint("Remove the extra spaces at the start of the line. Only lines after `if`, `for`, `while`, a function definition and similar can be indented."))
             }
             Tok::Ident(name) => {
-                if name == "type" && matches!(self.peek_at(1), Tok::Ident(_)) && matches!(self.peek_at(2), Tok::Newline) {
+                if name == "type"
+                    && matches!(self.peek_at(1), Tok::Ident(_))
+                    && (matches!(self.peek_at(2), Tok::Newline) || matches!(self.peek_at(2), Tok::Ident(w) if w == "extends"))
+                {
                     return self.parse_type_def();
                 }
                 if name == "test" && matches!(self.peek_at(1), Tok::Str(_)) {
@@ -421,8 +424,17 @@ impl<'a> Parser<'a> {
         };
         self.advance();
         let target = self.to_target(expr)?;
-        if let Target::Name(n) = &target {
-            check_binding(n)?;
+        match &target {
+            Target::Name(n) => check_binding(n)?,
+            Target::Pattern(p) => {
+                if let Some(op) = op {
+                    return Err(Diagnostic::error(format!("`{}=` can't be used with a pattern", op.symbol()), p.span())
+                        .with_code("LIP0006")
+                        .with_hint("Take the values apart with = first, then change them one by one."));
+                }
+                check_pattern(p)?;
+            }
+            _ => {}
         }
         let value = self.parse_expression()?;
         let s = self.stmt(StmtKind::Assign { target, op, ty: None, value, constant: false }, start);
@@ -469,7 +481,7 @@ impl<'a> Parser<'a> {
             loop {
                 let name = self.binding("a name for the block's input, like: with request")?;
                 let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
-                params.push(Param { name, ty, default: None });
+                params.push(Param { name, ty, default: None, rest: false });
                 if !self.eat(&Tok::Comma) {
                     break;
                 }
@@ -485,8 +497,10 @@ impl<'a> Parser<'a> {
             ExprKind::Ident(text) => Ok(Target::Name(Name { res: Default::default(), text, span: expr.span })),
             ExprKind::Field { object, name, optional: false } => Ok(Target::Field(*object, name)),
             ExprKind::Index { object, index } => Ok(Target::Index(*object, *index)),
+            ExprKind::Object(fields) => object_pattern(fields, expr.span).map(Target::Pattern),
+            ExprKind::List(items) => list_pattern(items, expr.span).map(Target::Pattern),
             _ => Err(Diagnostic::error("can't assign to this", expr.span).with_code("LIP0006").with_hint(
-                "Only a name (x), a field (user.name) or an item (items[0]) can be on the left of =. To compare values, use ==.",
+                "Only a name (x), a field (user.name), an item (items[0]) or a pattern ({name, age} or [first, second]) can be on the left of =. To compare values, use ==.",
             )),
         }
     }
@@ -529,14 +543,27 @@ impl<'a> Parser<'a> {
 
     fn parse_for(&mut self) -> PResult<Stmt> {
         let start = self.advance().span;
-        let first = self.binding("a loop variable name, like: for item in items")?;
-        let second = if self.eat(&Tok::Comma) { Some(self.binding("a second loop variable name")?) } else { None };
+        let (first, second, pattern) = if matches!(self.peek(), Tok::LBrace | Tok::LBracket) {
+            // `for {name, age} in people`: a hidden variable holds each item.
+            let e = self.parse_primary()?;
+            let pattern = match e.kind {
+                ExprKind::Object(fields) => object_pattern(fields, e.span)?,
+                ExprKind::List(items) => list_pattern(items, e.span)?,
+                _ => unreachable!("a [ or {{ starts an Array or an Object"),
+            };
+            check_pattern(&pattern)?;
+            (Name { res: Default::default(), text: "$item".into(), span: e.span }, None, Some(pattern))
+        } else {
+            let first = self.binding("a loop variable name, like: for item in items")?;
+            let second = if self.eat(&Tok::Comma) { Some(self.binding("a second loop variable name")?) } else { None };
+            (first, second, None)
+        };
         if !self.eat_kw(Kw::In) {
             return Err(self.unexpected("`in`").with_hint("Write loops like: for item in items   or   for i in 1 to 10"));
         }
         let iter = self.parse_expression()?;
         let body = self.parse_block("for", start)?;
-        Ok(Stmt { kind: StmtKind::For { first, second, iter, body }, span: start })
+        Ok(Stmt { kind: StmtKind::For { first, second, iter, body, pattern }, span: start })
     }
 
     fn parse_try(&mut self) -> PResult<Stmt> {
@@ -686,8 +713,26 @@ impl<'a> Parser<'a> {
     fn parse_type_def(&mut self) -> PResult<Stmt> {
         let start = self.advance().span;
         let name = self.binding("a type name")?;
+        let parent = if self.at_ident("extends") {
+            self.advance();
+            let parent = self.ident("the name of the type to extend, like: type Admin extends User")?;
+            if parent.text == name.text {
+                return Err(Diagnostic::error(format!("\"{}\" can't extend itself", name.text), parent.span)
+                    .with_hint("Extend another type, for example: type Admin extends User"));
+            }
+            if !matches!(self.peek(), Tok::Newline | Tok::Eof) {
+                return Err(self.unexpected("the end of the line"));
+            }
+            Some(parent)
+        } else {
+            None
+        };
         self.advance(); // newline
         if !self.eat(&Tok::Indent) {
+            if parent.is_some() {
+                // `type Admin extends User` with nothing of its own.
+                return Ok(Stmt { kind: StmtKind::TypeDef(Rc::new(TypeDecl { name, parent, fields: Vec::new(), methods: Vec::new() })), span: start });
+            }
             return Err(Diagnostic::error(format!("expected the fields of \"{}\" on indented lines", name.text), start)
                 .with_code("LIP0005")
                 .with_hint("For example:\n    type User\n        name: String\n        age = 0"));
@@ -724,7 +769,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.eat(&Tok::Dedent);
-        Ok(Stmt { kind: StmtKind::TypeDef(Rc::new(TypeDecl { name, fields, methods })), span: start })
+        Ok(Stmt { kind: StmtKind::TypeDef(Rc::new(TypeDecl { name, parent, fields, methods })), span: start })
     }
 
     /// Try to parse `name(params) [-> Type]` followed by an indented body.
@@ -766,13 +811,25 @@ impl<'a> Parser<'a> {
             if self.eat(close) {
                 break;
             }
+            let rest_span = self.span();
+            let rest = self.eat(&Tok::Ellipsis);
             let name = self.binding("a parameter name")?;
             if params.iter().any(|p| p.name.text == name.text) {
                 return Err(Diagnostic::error(format!("the parameter \"{}\" appears twice", name.text), name.span).with_code("LIP1001"));
             }
             let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
             let default = if self.eat(&Tok::Assign) { Some(self.parse_expression()?) } else { None };
-            params.push(Param { name, ty, default });
+            if rest {
+                if ty.is_some() || default.is_some() {
+                    return Err(Diagnostic::error(format!("\"...{}\" can't have a type or a default", name.text), name.span)
+                        .with_hint("It always holds an Array of the extra arguments (empty when there are none)."));
+                }
+                if !self.at(close) {
+                    return Err(Diagnostic::error(format!("\"...{}\" must be the last parameter", name.text), rest_span.to(name.span))
+                        .with_hint("It collects the arguments left over after the other parameters, so it goes at the end, for example: total(first, ...others)"));
+                }
+            }
+            params.push(Param { name, ty, default, rest });
             if !self.eat(&Tok::Comma) {
                 self.expect(close, "',' or ')' after function parameters")?;
                 break;
@@ -856,7 +913,7 @@ impl<'a> Parser<'a> {
         let start = self.span();
         let params = if matches!(self.peek(), Tok::Ident(_)) {
             let name = self.binding("a parameter name")?;
-            vec![Param { name, ty: None, default: None }]
+            vec![Param { name, ty: None, default: None, rest: false }]
         } else {
             self.advance();
             self.parse_params(&Tok::RParen)?
@@ -1052,7 +1109,7 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Arg { name: Some(name), value: self.parse_expression()? }
             } else {
-                let value = self.parse_expression()?;
+                let value = if self.at(&Tok::Ellipsis) { self.parse_spread()? } else { self.parse_expression()? };
                 if args.iter().any(|a| a.name.is_some()) {
                     return Err(Diagnostic::error("positional arguments must come before named ones", value.span)
                         .with_hint("For example: resize(image, width: 100)"));
@@ -1109,7 +1166,7 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let mut items = Vec::new();
                 while !self.eat(&Tok::RBracket) {
-                    items.push(self.parse_expression()?);
+                    items.push(if self.at(&Tok::Ellipsis) { self.parse_spread()? } else { self.parse_expression()? });
                     if !self.eat(&Tok::Comma) {
                         self.expect(&Tok::RBracket, "',' or ']'")?;
                         break;
@@ -1121,6 +1178,16 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let mut fields: Vec<(Name, Expr)> = Vec::new();
                 while !self.eat(&Tok::RBrace) {
+                    if self.at(&Tok::Ellipsis) {
+                        // `{...defaults, color: "red"}`: copies another Object's fields.
+                        let value = self.parse_spread()?;
+                        fields.push((Name { res: Default::default(), text: "...".into(), span: value.span }, value));
+                        if !self.eat(&Tok::Comma) {
+                            self.expect(&Tok::RBrace, "',' or '}'")?;
+                            break;
+                        }
+                        continue;
+                    }
                     let kspan = self.span();
                     let (key, ident_key) = match self.peek().clone() {
                         Tok::Str(_) => (Name { res: Default::default(), text: self.plain_string("a key")?, span: kspan }, false),
@@ -1138,7 +1205,7 @@ impl<'a> Parser<'a> {
                     } else {
                         return Err(self.unexpected("':' after the key").with_hint("Objects look like: { name: \"Dezy\", age: 25 }"));
                     };
-                    if fields.iter().any(|(k, _)| k.text == key.text) {
+                    if fields.iter().any(|(k, v)| k.text == key.text && !matches!(v.kind, ExprKind::Spread(_))) {
                         return Err(Diagnostic::error(format!("the key \"{}\" appears twice", key.text), key.span).with_code("LIP1001"));
                     }
                     fields.push((key, value));
@@ -1148,6 +1215,10 @@ impl<'a> Parser<'a> {
                     }
                 }
                 ExprKind::Object(fields)
+            }
+            Tok::Ellipsis => {
+                return Err(Diagnostic::error("`...` can't be used here", span)
+                    .with_hint("`...` spreads items, so it works inside [ ], { } and a call's ( ), for example: all = [...first, ...second]"))
             }
             Tok::Kw(k) => {
                 return Err(Diagnostic::error(format!("`{}` can't be used as a value here", k.as_str()), span).maybe_hint(match k {
@@ -1159,6 +1230,14 @@ impl<'a> Parser<'a> {
             _ => return Err(self.unexpected("a value")),
         };
         Ok(Expr { res: Default::default(), kind, span: span.to(self.prev_span()) })
+    }
+
+    /// `...value` inside [ ], { } or a call's arguments.
+    fn parse_spread(&mut self) -> PResult<Expr> {
+        let start = self.advance().span;
+        let inner = self.parse_expression()?;
+        let span = start.to(inner.span);
+        Ok(Expr { res: Default::default(), kind: ExprKind::Spread(Box::new(inner)), span })
     }
 
     fn string_expr(&mut self, parts: Vec<StrPart>, span: Span) -> PResult<Expr> {
@@ -1185,6 +1264,77 @@ impl<'a> Parser<'a> {
         }
         Ok(Expr { res: Default::default(), kind: ExprKind::Template(out), span })
     }
+}
+
+const PATTERN_HINT: &str = "For example: {name, age: years} = user   or   [first, _, third, ...others] = items";
+
+fn plain_name(text: String, span: Span) -> Name {
+    Name { res: Default::default(), text, span }
+}
+
+/// `{name, age: years, ...others}` on the left of `=` or after `for`.
+fn object_pattern(fields: Vec<(Name, Expr)>, span: Span) -> PResult<Pattern> {
+    let count = fields.len();
+    let mut out = Vec::new();
+    let mut rest = None;
+    for (i, (key, value)) in fields.into_iter().enumerate() {
+        let vspan = value.span;
+        match value.kind {
+            ExprKind::Spread(inner) => match inner.kind {
+                ExprKind::Ident(text) if i + 1 == count => rest = Some(plain_name(text, inner.span)),
+                ExprKind::Ident(_) => {
+                    return Err(Diagnostic::error("`...` must come last in a pattern", vspan).with_code("LIP0006").with_hint(PATTERN_HINT))
+                }
+                _ => return Err(Diagnostic::error("`...` in a pattern needs a variable name", vspan).with_code("LIP0006").with_hint(PATTERN_HINT)),
+            },
+            ExprKind::Ident(text) if text != "_" => out.push((key, plain_name(text, vspan))),
+            _ => {
+                return Err(Diagnostic::error("each field in a pattern needs a variable name", vspan)
+                    .with_code("LIP0006")
+                    .with_hint("For example: {name, age: years} = user   puts user.name in name and user.age in years."))
+            }
+        }
+    }
+    Ok(Pattern::Object { fields: out, rest, span })
+}
+
+/// `[first, _, third, ...others]` on the left of `=` or after `for`.
+fn list_pattern(items: Vec<Expr>, span: Span) -> PResult<Pattern> {
+    let count = items.len();
+    let mut out = Vec::new();
+    let mut rest = None;
+    for (i, item) in items.into_iter().enumerate() {
+        let ispan = item.span;
+        match item.kind {
+            ExprKind::Ident(text) if text == "_" => out.push(None),
+            ExprKind::Ident(text) => out.push(Some(plain_name(text, ispan))),
+            ExprKind::Spread(inner) => match inner.kind {
+                ExprKind::Ident(text) if i + 1 == count && text != "_" => rest = Some(plain_name(text, inner.span)),
+                ExprKind::Ident(_) => {
+                    return Err(Diagnostic::error("`...` must come last in a pattern", ispan).with_code("LIP0006").with_hint(PATTERN_HINT))
+                }
+                _ => return Err(Diagnostic::error("`...` in a pattern needs a variable name", ispan).with_code("LIP0006").with_hint(PATTERN_HINT)),
+            },
+            _ => {
+                return Err(Diagnostic::error("each item in a pattern needs a variable name (or _ to skip it)", ispan)
+                    .with_code("LIP0006")
+                    .with_hint(PATTERN_HINT))
+            }
+        }
+    }
+    Ok(Pattern::List { items: out, rest, span })
+}
+
+/// A pattern's variables: no reserved words, no name twice.
+fn check_pattern(p: &Pattern) -> PResult<()> {
+    let names = p.names();
+    for (i, n) in names.iter().enumerate() {
+        check_binding(n)?;
+        if names[..i].iter().any(|m| m.text == n.text) {
+            return Err(Diagnostic::error(format!("\"{}\" appears twice in this pattern", n.text), n.span).with_code("LIP1001"));
+        }
+    }
+    Ok(())
 }
 
 fn check_binding(name: &Name) -> PResult<()> {

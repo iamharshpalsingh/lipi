@@ -66,6 +66,7 @@ fn collect(body: &Block, out: &mut Vec<Declared>) {
 fn collect_stmt(stmt: &Stmt, out: &mut Vec<Declared>) {
     match &stmt.kind {
         StmtKind::Assign { target: Target::Name(n), op: None, .. } => out.push((n.text.clone(), n.span, Kind::Variable)),
+        StmtKind::Assign { target: Target::Pattern(p), .. } => p.names().into_iter().for_each(|n| out.push((n.text.clone(), n.span, Kind::Variable))),
         StmtKind::Func(f) | StmtKind::Component(f) => out.push((f.name.text.clone(), f.name.span, Kind::Definition)),
         StmtKind::TypeDef(t) => out.push((t.name.text.clone(), t.name.span, Kind::Definition)),
         StmtKind::State { name, .. } => out.push((name.text.clone(), name.span, Kind::Variable)),
@@ -235,6 +236,7 @@ impl Linter {
                         self.expr(obj);
                         self.expr(idx);
                     }
+                    Target::Pattern(_) => {}
                 }
             }
             StmtKind::If { branches, otherwise } => {
@@ -254,9 +256,13 @@ impl Linter {
                 self.expr(count);
                 self.block(body);
             }
-            StmtKind::For { first, second, iter, body } => {
+            StmtKind::For { first, second, iter, body, pattern } => {
                 self.expr(iter);
-                self.local(first);
+                match pattern {
+                    // `first` is the loop's hidden variable; the pattern's names are the real ones.
+                    Some(p) => p.names().into_iter().for_each(|n| self.local(n)),
+                    None => self.local(first),
+                }
                 if let Some(s) = second {
                     self.local(s);
                 }
@@ -336,7 +342,7 @@ impl Linter {
             }
             ExprKind::List(items) => items.iter().for_each(|i| self.expr(i)),
             ExprKind::Object(fields) => fields.iter().for_each(|(_, v)| self.expr(v)),
-            ExprKind::Unary(_, x) | ExprKind::Await(x) => self.expr(x),
+            ExprKind::Unary(_, x) | ExprKind::Await(x) | ExprKind::Spread(x) => self.expr(x),
             ExprKind::Binary(_, a, b) | ExprKind::And(a, b) | ExprKind::Or(a, b) | ExprKind::Coalesce(a, b) => {
                 self.expr(a);
                 self.expr(b);

@@ -19,17 +19,19 @@ use std::collections::{HashMap, HashSet};
 pub const STRING_MEMBERS: &[&str] = &[
     "length", "upper", "lower", "trim", "trimStart", "trimEnd", "split", "contains", "startsWith", "endsWith",
     "replace", "indexOf", "slice", "repeat", "chars", "lines", "isEmpty", "padStart", "padEnd", "reverse", "toNumber",
+    "lastIndexOf",
 ];
 
 pub const LIST_MEMBERS: &[&str] = &[
     "length", "first", "last", "push", "pop", "insert", "removeAt", "remove", "contains", "indexOf", "join", "map",
     "filter", "reduce", "each", "find", "any", "all", "sort", "sortBy", "reverse", "slice", "sum", "min", "max",
-    "isEmpty", "copy", "unique", "flat", "count",
+    "isEmpty", "copy", "unique", "flat", "count", "findIndex", "findLast", "flatMap", "shift", "unshift", "groupBy",
+    "lastIndexOf",
 ];
 
 pub const OBJECT_MEMBERS: &[&str] = &["keys", "values", "entries", "has", "get", "remove", "copy", "length", "isEmpty"];
 
-pub const NUMBER_MEMBERS: &[&str] = &["round", "floor", "ceil", "abs", "toString"];
+pub const NUMBER_MEMBERS: &[&str] = &["round", "floor", "ceil", "abs", "toString", "toFixed"];
 
 pub const TASK_MEMBERS: &[&str] = &["cancel", "isDone"];
 
@@ -119,8 +121,31 @@ pub fn unknown_name<'a>(name: &str, span: Span, candidates: impl IntoIterator<It
 
 /// The error for accessing a member that a built-in type doesn't have.
 pub fn unknown_member(ty: &str, name: &str, span: Span, members: &[&str]) -> Diagnostic {
-    let hint = suggest::did_you_mean(name, members.iter().copied()).unwrap_or_else(|| format!("Available: {}", members.join(", ")));
+    let hint = suggest::foreign_member_hint(name)
+        .map(String::from)
+        .or_else(|| suggest::did_you_mean(name, members.iter().copied()))
+        .unwrap_or_else(|| format!("Available: {}", members.join(", ")));
     Diagnostic::error(format!("{ty}s don't have \"{name}\""), span).with_code("LIP1004").with_hint(hint)
+}
+
+/// The error for `...value` where `value` can't be spread (`into` is "an Array", "an Object" or "the arguments").
+pub fn spread_error(into: &str, ty: &str, span: Span) -> Diagnostic {
+    let hint = if into == "an Object" {
+        "Only an Object's fields can be spread into { }, for example: {...defaults, color: \"red\"}"
+    } else {
+        "Only Arrays and Strings can be spread here, for example: [...first, ...second]"
+    };
+    Diagnostic::error(format!("cannot spread {} into {into}", with_article(ty)), span).with_code("LIP2001").with_hint(hint)
+}
+
+/// The error for a pattern (`{name} = x` or `[a, b] = x`) given the wrong kind of value.
+pub fn pattern_error(object: bool, ty: &str, span: Span) -> Diagnostic {
+    let (message, hint) = if object {
+        (format!("a {{...}} pattern needs an Object, but this is {}", with_article(ty)), "Patterns in { } take fields from an Object, for example: {name, age} = user")
+    } else {
+        (format!("a [...] pattern needs an Array, but this is {}", with_article(ty)), "Patterns in [ ] take items from an Array, for example: [first, second] = items")
+    };
+    Diagnostic::error(message, span).with_code("LIP2001").with_hint(hint)
 }
 
 // ----- static types ---------------------------------------------------------
@@ -211,6 +236,8 @@ struct Sig {
     params: Vec<(String, Ty, bool)>, // name, declared type, has default
     /// Components also accept `key:`.
     component: bool,
+    /// The `...rest` parameter's name: any number of extra arguments is fine.
+    rest: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -343,6 +370,12 @@ impl Checker {
                 self.global_types.entry(n.text.clone()).or_default().push(t);
                 self.survey_expr(value);
             }
+            StmtKind::Assign { target: Target::Pattern(p), value, .. } => {
+                for n in p.names() {
+                    self.global_types.entry(n.text.clone()).or_default().push(None);
+                }
+                self.survey_expr(value);
+            }
             StmtKind::Assign { value, .. } | StmtKind::Expr(value) | StmtKind::Throw(value) => self.survey_expr(value),
             StmtKind::Show(values) => values.iter().for_each(|v| self.survey_expr(v)),
             StmtKind::Return(Some(v)) => self.survey_expr(v),
@@ -375,10 +408,13 @@ impl Checker {
                 }
             }
             StmtKind::While { body, .. } | StmtKind::Repeat { body, .. } | StmtKind::Test { body, .. } => self.survey(body),
-            StmtKind::For { first, second, body, .. } => {
+            StmtKind::For { first, second, body, pattern, .. } => {
                 self.global_types.entry(first.text.clone()).or_default().push(None);
                 if let Some(s) = second {
                     self.global_types.entry(s.text.clone()).or_default().push(None);
+                }
+                for n in pattern.iter().flat_map(|p| p.names()) {
+                    self.global_types.entry(n.text.clone()).or_default().push(None);
                 }
                 self.survey(body);
             }
@@ -623,6 +659,13 @@ impl Checker {
                 }
             }
             StmtKind::TypeDef(t) => {
+                if let Some(p) = &t.parent {
+                    if !self.type_names.contains(&p.text) && self.lookup(&p.text).is_none() && !self.builtins.contains(&p.text) {
+                        let candidates: Vec<&str> = self.type_names.iter().map(String::as_str).collect();
+                        let hint = suggest::did_you_mean(&p.text, candidates).unwrap_or_else(|| "Define the type it extends, or check the spelling.".into());
+                        self.err(Diagnostic::error(format!("unknown type \"{}\"", p.text), p.span).with_code("LIP2006").with_hint(hint));
+                    }
+                }
                 for f in &t.fields {
                     let declared = f.ty.as_ref().map(|ty| self.annotation(ty));
                     if let Some(d) = &f.default {
@@ -633,7 +676,7 @@ impl Checker {
                     }
                 }
                 for m in &t.methods {
-                    self.function(m, Some(&t.name.text));
+                    self.function(m, Some(t.as_ref()));
                 }
             }
             StmtKind::Test { body, .. } => {
@@ -708,6 +751,22 @@ impl Checker {
                 self.expr(obj);
                 self.expr(index);
             }
+            Target::Pattern(p) => {
+                for n in p.names() {
+                    if self.lookup(&n.text).is_some_and(|v| v.constant) {
+                        self.err(
+                            Diagnostic::error(format!("\"{}\" is a constant and can't be changed", n.text), n.span)
+                                .with_code("LIP1003")
+                                .with_hint("Remove `const` where it's defined if it needs to change."),
+                        );
+                    }
+                }
+                let object = matches!(p, Pattern::Object { .. });
+                let wanted = if object { Ty::Object } else { Ty::Array };
+                if vt.known() && vt != wanted {
+                    self.err(pattern_error(object, vt.name(), value.span));
+                }
+            }
         }
     }
 
@@ -718,10 +777,14 @@ impl Checker {
         ty
     }
 
-    fn function(&mut self, f: &FuncDecl, owner_type: Option<&str>) {
+    /// `owner`: the type a method belongs to (its methods see `self`, and `super` when it extends another type).
+    fn function(&mut self, f: &FuncDecl, owner: Option<&TypeDecl>) {
         let mut params: Vec<(String, Var)> = Vec::new();
-        if owner_type.is_some() {
+        if let Some(t) = owner {
             params.push(("self".into(), Var { ty: Ty::Any, declared: None, constant: false, sig: None }));
+            if t.parent.is_some() {
+                params.push(("super".into(), Var { ty: Ty::Object, declared: None, constant: true, sig: None }));
+            }
         }
         for p in &f.params {
             let declared = p.ty.as_ref().map(|t| self.annotation(t));
@@ -731,7 +794,8 @@ impl Checker {
                     self.check_fits(decl, dt, d, &p.name.text);
                 }
             }
-            params.push((p.name.text.clone(), Var { ty: declared.unwrap_or(Ty::Any), declared, constant: false, sig: None }));
+            let ty = if p.rest { Ty::Array } else { declared.unwrap_or(Ty::Any) };
+            params.push((p.name.text.clone(), Var { ty, declared, constant: false, sig: None }));
         }
         if let Some(r) = &f.ret {
             self.annotation(r);
@@ -780,15 +844,43 @@ impl Checker {
             }
             ExprKind::List(items) => {
                 for i in items {
-                    self.expr(i);
+                    match &i.kind {
+                        ExprKind::Spread(inner) => {
+                            let t = self.expr(inner);
+                            if t.known() && !matches!(t, Ty::Array | Ty::Str) {
+                                self.err(spread_error("an Array", t.name(), inner.span));
+                            }
+                        }
+                        _ => {
+                            self.expr(i);
+                        }
+                    }
                 }
                 Ty::Array
             }
             ExprKind::Object(fields) => {
                 for (_, v) in fields {
-                    self.expr(v);
+                    match &v.kind {
+                        ExprKind::Spread(inner) => {
+                            let t = self.expr(inner);
+                            if t.known() && t != Ty::Object {
+                                self.err(spread_error("an Object", t.name(), inner.span));
+                            }
+                        }
+                        _ => {
+                            self.expr(v);
+                        }
+                    }
                 }
                 Ty::Object
+            }
+            // In a call's arguments (lists and objects handle their own).
+            ExprKind::Spread(inner) => {
+                let t = self.expr(inner);
+                if t.known() && !matches!(t, Ty::Array | Ty::Str) {
+                    self.err(spread_error("the arguments", t.name(), inner.span));
+                }
+                Ty::Any
             }
             ExprKind::Unary(UnaryOp::Neg, inner) => {
                 let t = self.expr(inner);
@@ -969,9 +1061,19 @@ impl Checker {
     }
 
     fn check_args(&mut self, sig: &Sig, args: &[Arg], types: &[Ty], span: Span) {
-        let signature = || format!("It is defined as {}({}).", sig.name, sig.params.iter().map(|p| p.0.as_str()).collect::<Vec<_>>().join(", "));
+        // With `...values` the number of arguments is only known when the program runs.
+        if args.iter().any(|a| matches!(a.value.kind, ExprKind::Spread(_))) {
+            return;
+        }
+        let signature = || {
+            let mut names: Vec<String> = sig.params.iter().map(|p| p.0.clone()).collect();
+            if let Some(r) = &sig.rest {
+                names.push(format!("...{r}"));
+            }
+            format!("It is defined as {}({}).", sig.name, names.join(", "))
+        };
         let positional = args.iter().filter(|a| a.name.is_none()).count();
-        if positional > sig.params.len() {
+        if positional > sig.params.len() && sig.rest.is_none() {
             let n = sig.params.len();
             let d = Diagnostic::error(format!("\"{}\" takes {} argument{}, but {} were given", sig.name, n, if n == 1 { "" } else { "s" }, positional), span)
                 .with_code("LIP2003")
@@ -985,7 +1087,7 @@ impl Checker {
             let idx = match &arg.name {
                 None => {
                     next_positional += 1;
-                    Some(next_positional - 1)
+                    Some(next_positional - 1).filter(|&i| i < sig.params.len())
                 }
                 Some(n) => {
                     let found = sig.params.iter().position(|p| p.0 == n.text);
@@ -1061,18 +1163,21 @@ fn collect_stmt(stmt: &Stmt, out: &mut Vec<Collected>, depth: usize) {
             sig: None,
             def_span: if *constant { top(n.span) } else { None },
         }),
+        StmtKind::Assign { target: Target::Pattern(p), .. } => p.names().into_iter().for_each(|n| out.push(plain(&n.text))),
         StmtKind::State { name, ty, .. } => out.push(Collected { name: name.text.clone(), ty: ty.clone(), constant: false, sig: None, def_span: None }),
         StmtKind::Func(f) | StmtKind::Component(f) => {
             let sig = Sig {
                 name: f.name.text.clone(),
-                params: f.params.iter().map(|p| (p.name.text.clone(), param_ty(p), p.default.is_some())).collect(),
+                params: f.params.iter().filter(|p| !p.rest).map(|p| (p.name.text.clone(), param_ty(p), p.default.is_some())).collect(),
                 component: f.is_component,
+                rest: f.params.iter().find(|p| p.rest).map(|p| p.name.text.clone()),
             };
             out.push(Collected { name: f.name.text.clone(), ty: None, constant: false, sig: Some(sig), def_span: top(f.name.span) });
         }
         StmtKind::TypeDef(t) => {
             let sig = Sig {
                 component: false,
+                rest: None,
                 name: t.name.text.clone(),
                 params: t
                     .fields
@@ -1083,12 +1188,17 @@ fn collect_stmt(stmt: &Stmt, out: &mut Vec<Collected>, depth: usize) {
                     })
                     .collect(),
             };
-            out.push(Collected { name: t.name.text.clone(), ty: None, constant: false, sig: Some(sig), def_span: top(t.name.span) });
+            // A type that extends another also takes its parent's fields, which may live in another file.
+            let sig = if t.parent.is_some() { None } else { Some(sig) };
+            out.push(Collected { name: t.name.text.clone(), ty: None, constant: false, sig, def_span: top(t.name.span) });
         }
-        StmtKind::For { first, second, body, .. } => {
+        StmtKind::For { first, second, body, pattern, .. } => {
             out.push(plain(&first.text));
             if let Some(s) = second {
                 out.push(plain(&s.text));
+            }
+            for n in pattern.iter().flat_map(|p| p.names()) {
+                out.push(plain(&n.text));
             }
             collect_names(body, out, depth + 1);
         }

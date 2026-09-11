@@ -102,7 +102,9 @@ Different types are never equal (`1 == "1"` is `false`).
 ## 4. Strings
 
 - **Double quotes interpolate:** `"Total: {price * qty}"`.
-- **Single quotes are literal:** `'{"a": 1}'`, which is handy for JSON.
+- **Single quotes are literal:** `'{"a": 1}'`, which is handy for JSON. A
+  backslash before a character that isn't one of the escapes below stays as
+  it is, so regex patterns read naturally: `'\d+'` (1.2).
 - **Triple quotes** (`"""` / `'''`) span lines. A newline right after the
   opening quotes is dropped.
 - Escapes: `\n \t \r \\ \" \' \{ \} \0 \u{1F600}`.
@@ -127,6 +129,22 @@ capture variables by reference.
 
 **Evaluation order** is left to right: the receiver, then the arguments in
 order, then the call.
+
+**Patterns** (1.2) take Objects and Arrays apart:
+
+```lipi
+{name, age: years, ...others} = user   # fields; age: years renames; ...others gets the rest (a new Object)
+[first, _, third, ...more] = items     # by position; _ skips an item; ...more gets the rest (a new Array)
+[a, b] = [b, a]                        # swap
+for {name, age} in people              # in loops too
+```
+
+The variables follow the normal scope rule (in a `for`, they belong to the
+loop's function like the loop variable). A missing field is an error
+(LIP5004, with a "did you mean"); an Array with fewer items than the pattern
+names is LIP5001, and extra items are ignored. A `{ }` pattern needs an
+Object (a module works too: `{floor, max} = math`), a `[ ]` pattern an Array
+(LIP2001 otherwise).
 
 ## 6. Operators
 
@@ -213,6 +231,15 @@ greet(greeting: "Namaste", name: "Ravi")   # named arguments
 - **Lambdas:** `x => x * 2`, `(a, b) => a + b`. Callbacks receive only the
   arguments they declare, so `items.map(x => …)` and `items.map((x, i) => …)`
   both work.
+- **Rest parameter** (1.2): `total(first, ...others)` collects the remaining
+  positional arguments into an Array (empty when there are none). It comes
+  last and has no type or default. A callback with a rest parameter receives
+  every argument.
+- **Spread** (1.2): `...items` spreads an Array, or a String's characters,
+  into an Array literal or a call's arguments: `[...a, ...b]`,
+  `math.max(...scores)`. In an Object literal, `{...defaults, color: "red"}`
+  copies another Object's fields; a later key replaces an earlier value and
+  keeps its place. Anything else is LIP2001.
 - **Calls without parentheses** at the start of a line: `server.start 3000`,
   `checkout payment`.
 - **Trailing blocks:** a call followed by an indented block passes the block as
@@ -244,7 +271,26 @@ v = User(name: "Asha")
 
 A field is required unless it has a default or a nullable type (`T?`). Methods
 see the instance as `self`. Setting an undeclared field is an error.
-Inheritance, generics and traits aren't in v0.1.
+
+**Extending a type** (1.2):
+
+```lipi
+type Admin extends User
+    level = 1
+
+    greet()
+        return super.greet() + " (admin)"
+
+type Guest extends User          # nothing of its own
+```
+
+An Admin has all of User's fields (first, in their order) and methods, plus
+its own; a field or method declared again replaces the parent's (a field keeps
+its place). Inside Admin's methods, `super.greet()` calls User's version on
+the same object. An Admin is also a User wherever a type is checked, so
+`welcome(u: User)` accepts one; `typeOf` gives "Admin". The parent may be
+defined later in the file or come from a module. Generics and traits aren't
+available yet.
 
 ## 10. Errors
 
@@ -319,8 +365,8 @@ from math use add                # bind names directly
   A name that matches both a project file and a package is error LIP3004.
 - Each module runs once, and circular `use` is error LIP3002. Using a name a
   module doesn't export is error LIP3003.
-- The standard modules (`math json fs env http time process server crypto`)
-  are always available with no `use`.
+- The standard modules (`math json fs env http time process server crypto
+  database regex encoding js`) are always available with no `use`.
 
 ## 13. Gradual type system
 
@@ -365,31 +411,60 @@ delete` are also global.
 
 | Module | Members |
 |---|---|
-| `math` | `pi e infinity sqrt abs floor ceil round(x, digits) pow log(x, base) log10 exp sin cos tan atan2 sign clamp min max random randomInt(min, max)` |
+| `math` | `pi e infinity sqrt abs floor ceil trunc round(x, digits) pow log(x, base) log10 exp sin cos tan atan2 sign clamp min max random randomInt(min, max)`; on 64-bit Integers: `bitAnd bitOr bitXor bitNot shiftLeft(x, bits) shiftRight(x, bits)` |
 | `json` | `parse(text)`, `stringify(value, pretty: true)` |
 | `fs` | `read write append exists isDir list makeDir delete` |
 | `env` | `get(name, default) has all load(".env")` |
 | `http` | `get(url, options) delete(url, options) post/put/patch(url, body, options) request({...})`. Options: `headers timeout query`. A response has `status ok headers body url json()` |
-| `time` | `now()` (Integer ms since 1970), `date(ms)`, `iso(ms)` |
+| `time` | `now()` (Integer ms since 1970), `date(ms)`, `iso(ms)`, `after(ms, block)`, `every(ms, block)` (see below) |
+| `regex` | `test(pattern, text)`, `find` (the first match or null), `findAll`, `replace(pattern, text, replacement)`, `split(pattern, text)`; options `ignoreCase: true`, `multiline: true` (see below) |
+| `encoding` | `base64Encode base64Decode urlEncode urlDecode hexEncode hexDecode`, all on text (UTF-8) |
 | `process` | `args platform exit(code) cwd() run(command)` |
 | `server` | see §15.1 |
 | `crypto` | `sha256 hmacSha256 hashPassword verifyPassword randomToken(bytes) uuid` |
 | `database` | see §15.2 |
 
 **String:** `length upper lower trim trimStart trimEnd split contains
-startsWith endsWith replace indexOf slice repeat chars lines isEmpty padStart
-padEnd reverse toNumber`
+startsWith endsWith replace indexOf lastIndexOf slice repeat chars lines
+isEmpty padStart padEnd reverse toNumber`
 
-**Array** (the first five change the Array): `push pop insert removeAt remove`,
-plus `length first last contains indexOf join map filter reduce each find any
-all count sort sortBy reverse slice sum min max isEmpty copy unique flat`.
-`items[-1]` is the last item.
+**Array** (the first seven change the Array): `push pop insert removeAt remove
+shift unshift`, plus `length first last contains indexOf lastIndexOf join map
+filter reduce each find findIndex findLast any all count sort sortBy reverse
+slice sum min max isEmpty copy unique flat flatMap groupBy`. `items[-1]` is the
+last item. `sort((a, b) => a - b)` sorts with a comparison (negative: a
+first), keeping equal items in order; `groupBy(p => p.city)` gives an Object
+of Arrays. `indexOf`, `findIndex` and friends give null when nothing matches.
+
+**Methods from JavaScript** that LiPi spells differently (`includes`,
+`forEach`, `some`, `every`, `toUpperCase`, `substring`...) are errors whose
+hint names the LiPi method.
 
 **Object:** `keys values entries has get(key, default) remove copy isEmpty
 length`. `obj.field` is an error when the field is missing; `obj["key"]` and
 `obj.get("key")` return `null` instead.
 
-**Integer/Decimal:** `round(digits) floor ceil abs toString`
+**Integer/Decimal:** `round(digits) floor ceil abs toString toFixed(digits)`.
+`toFixed` gives a String with exactly that many decimals, rounded like
+JavaScript's (`2.5.toFixed(0)` is "3").
+
+**Patterns (`regex`).** A pattern is a String, easiest in single quotes:
+`regex.findAll('(\d+)-(?<unit>\w+)', text)`. A match is
+`{text, index, groups, named}`: `index` counts characters, `groups` holds the
+numbered groups (null when a group didn't take part) and `named` the named
+ones. A replacement can use `$1`, `$<name>`, `$&` and `$$`, or be a function
+that gets the match and returns a String. Patterns mean the same in every
+engine: `\d` and `\w` are ASCII, `\b` uses ASCII word characters, `.` doesn't
+match line breaks, and lookahead, lookbehind and backreferences aren't
+available (LIP5008). After a non-empty match, an empty match at the same
+place is skipped.
+
+**Timers.** `time.after(ms, block)` runs the block once after `ms`
+milliseconds and `time.every(ms, block)` again and again; both return an
+Object whose `stop()` cancels it. As in JavaScript, timers run once the main
+program has finished, in time order. `lipi run` runs them after the file's
+code (not while a web server started by `server.start` is running); an error
+in a timer stops that timer and is shown, and the others go on.
 
 ### 15.1 Web server
 
@@ -709,9 +784,11 @@ stdio, so any LSP editor can use it. It provides:
 `lipi lsp` and adds syntax highlighting, indentation rules, comment toggling,
 bracket matching, format-on-save and the LiPi file icon.
 
-## 18. Grammar (EBNF, v1.0)
+## 18. Grammar (EBNF, v1.2)
 
-The grammar is frozen for LiPi 1.x (see [STABILITY.md](STABILITY.md)).
+The grammar is stable for LiPi 1.x (see [STABILITY.md](STABILITY.md)): 1.x
+releases only add forms that used to be errors. 1.2 added spread and rest
+(`...`), patterns (`{a, b} = x`, `[a, b] = x`, `for {a} in xs`) and `extends`.
 `tests/conformance` uses every form below.
 
 ```ebnf
@@ -729,15 +806,20 @@ show           = "show" [ expression { "," expression } ] ;
 const          = "const" IDENT [ ":" type ] "=" expression ;
 typed_binding  = IDENT ":" type "=" expression ;
 state          = "state" IDENT [ ":" type ] "=" expression ;
-assignment     = lvalue ( "=" | "+=" | "-=" | "*=" | "/=" ) expression ;
+assignment     = lvalue ( "=" | "+=" | "-=" | "*=" | "/=" ) expression
+               | pattern "=" expression ;
 lvalue         = IDENT | postfix "." name | postfix "[" expression "]" ;
+pattern        = "{" [ pfield { "," pfield } [ "," "..." IDENT ] | "..." IDENT ] [ "," ] "}"
+               | "[" [ pitem { "," pitem } [ "," "..." IDENT ] | "..." IDENT ] [ "," ] "]" ;
+pfield         = name [ ":" IDENT ] ;                (* {age: years} puts age in years *)
+pitem          = IDENT ;                             (* "_" skips an item *)
 if             = "if" expression block { "else" "if" expression block } [ "else" block ] ;
 while          = "while" expression block ;
-for            = "for" IDENT [ "," IDENT ] "in" expression block ;
+for            = "for" ( IDENT [ "," IDENT ] | pattern ) "in" expression block ;
 repeat         = "repeat" expression block ;
 function       = [ "async" ] [ "function" ] IDENT "(" [ params ] ")" [ "->" type ] block ;
 component      = "component" IDENT "(" [ params ] ")" block ;
-params         = param { "," param } ;
+params         = param { "," param } [ "," "..." IDENT ] | "..." IDENT ;
 param          = IDENT [ ":" type ] [ "=" expression ] ;
 return         = "return" [ expression ] ;
 throw          = "throw" expression ;
@@ -751,7 +833,8 @@ from_use       = "from" module "use" IDENT { "," IDENT } ;
 module         = STRING | IDENT { "." name } ;
 export         = "export" ( IDENT { "," IDENT } | function | component | const
                | typed_binding | state | assignment | type ) ;
-type           = "type" IDENT NEWLINE INDENT { field | method } DEDENT ;
+type           = "type" IDENT NEWLINE INDENT { field | method } DEDENT
+               | "type" IDENT "extends" IDENT [ NEWLINE INDENT { field | method } DEDENT ] ;
 field          = IDENT [ ":" type ] [ "=" expression ] ;
 method         = [ "async" ] [ "function" ] IDENT "(" [ params ] ")" [ "->" type ] block ;
 test           = "test" STRING block ;
@@ -778,13 +861,15 @@ unary          = ( "-" | "await" ) unary | power ;
 power          = postfix [ "**" unary ] ;              (* right-associative; -2 ** 2 is -4 *)
 postfix        = primary { "(" [ args ] ")" | "." name | "?." name | "[" expression "]" } ;
 args           = arg { "," arg } ;
-arg            = [ IDENT ":" ] expression ;          (* named arguments come last *)
+arg            = [ IDENT ":" ] expression | "..." expression ;   (* named arguments come last *)
 primary        = INTEGER | DECIMAL | STRING | "true" | "false" | "null" | IDENT
-               | "[" [ expression { "," expression } [ "," ] ] "]"
+               | "[" [ item { "," item } [ "," ] ] "]"
                | "{" [ entry { "," entry } [ "," ] ] "}"
                | "(" expression ")" ;
+item           = expression | "..." expression ;
 entry          = ( name | STRING | INTEGER ) ":" expression
-               | IDENT ;                              (* {name} is short for {name: name} *)
+               | IDENT                                (* {name} is short for {name: name} *)
+               | "..." expression ;
 name           = IDENT | KEYWORD ;                    (* keywords work after "." and as keys *)
 
 INTEGER        = DIGIT { DIGIT | "_" } | "0x" HEX { HEX | "_" } ;
@@ -809,9 +894,13 @@ IDENT          = ( LETTER | "_" ) { LETTER | DIGIT | "_" } ;   (* ASCII *)
 | Scope resolution | Decided before the program runs: an assignment updates the variable of that name in the nearest enclosing function or file that assigns it, else creates a local. `lipi run` and `lipi build` share this rule (`lipi_compiler::scope`) |
 | Match syntax | Patterns directly (no `when`), `else`, `_`, guards with `if` |
 | Extra keywords | `show`, `repeat`, `break`, `continue` (from the plan's examples and loop needs) |
-| `type` blocks | A simple object model (fields and methods, no inheritance) |
+| `type` blocks | A simple object model: fields and methods, and (1.2) single inheritance with `extends` and `super` |
+| Patterns | A missing field is an error, not null (typos are caught); extra Array items are ignored |
+| Regex | One pattern language for both engines (JavaScript's, minus lookaround and backreferences), with character positions |
+| Timers | Run after the main program, as in JavaScript's event loop |
 
 ## 20. Not yet implemented
 
 The hosted LiPi Registry service, forms and validation helpers, source maps and minified production builds,
-the debugger, regex and encoding modules, permission-aware I/O, and generics/traits.
+the debugger, permission-aware I/O, generics/traits, generators (`yield`), regex lookaround and backreferences,
+and timers while a `lipi run` web server is running.

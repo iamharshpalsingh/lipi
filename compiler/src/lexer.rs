@@ -124,6 +124,8 @@ pub enum Tok {
     Comma,
     Colon,
     Dot,
+    /// `...` (spread and rest)
+    Ellipsis,
     QuestionDot,
     QuestionQuestion,
     Question,
@@ -174,6 +176,7 @@ impl Tok {
             Tok::Comma => ",",
             Tok::Colon => ":",
             Tok::Dot => ".",
+            Tok::Ellipsis => "...",
             Tok::QuestionDot => "?.",
             Tok::QuestionQuestion => "??",
             Tok::Question => "?",
@@ -375,7 +378,7 @@ impl<'a> Lexer<'a> {
         }
         match self.peek() {
             None | Some('\n') | Some('\r') | Some('#') => return Ok(()), // blank or comment-only line
-            Some('.') if !matches!(self.peek_n(1), Some('0'..='9')) && !self.tokens.is_empty() => {
+            Some('.') if !matches!(self.peek_n(1), Some('0'..='9' | '.')) && !self.tokens.is_empty() => {
                 return Ok(()); // `.method()` continues the previous line
             }
             _ => {}
@@ -548,10 +551,16 @@ impl<'a> Lexer<'a> {
                             }
                         }
                     }
+                    // In 'single quotes' other backslashes stay as they are, so
+                    // patterns read naturally: regex.find('\d+', text).
+                    _ if quote == '\'' => {
+                        lit.push('\\');
+                        lit.push(e);
+                    }
                     _ => {
                         return Err(Diagnostic::error(format!("unknown escape '\\{e}' in string"), self.span_from(esc_start))
                             .with_code("LIP0003")
-                            .with_hint("Known escapes: \\n (new line), \\t (tab), \\\\ (backslash), \\\" (quote), \\{ (brace)."))
+                            .with_hint("Known escapes: \\n (new line), \\t (tab), \\\\ (backslash), \\\" (quote), \\{ (brace). For a regex pattern, use single quotes: '\\d+'"))
                     }
                 }
             } else if c == '{' && quote == '"' {
@@ -750,6 +759,11 @@ impl<'a> Lexer<'a> {
             }
             ',' => Tok::Comma,
             ':' => Tok::Colon,
+            '.' if self.peek() == Some('.') && self.peek_n(1) == Some('.') => {
+                self.bump();
+                self.bump();
+                Tok::Ellipsis
+            }
             '.' => Tok::Dot,
             '?' => {
                 if self.eat('.') {

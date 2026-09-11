@@ -42,6 +42,7 @@ fn collect_stmt(stmt: &Stmt, n: &mut ScopeNames, top: bool) {
                 n.assigned.push(name.text.clone());
             }
         }
+        StmtKind::Assign { target: Target::Pattern(p), .. } => n.assigned.extend(p.names().into_iter().map(|x| x.text.clone())),
         StmtKind::If { branches, otherwise } => {
             for (_, b) in branches {
                 collect_block(b, n, false);
@@ -51,10 +52,13 @@ fn collect_stmt(stmt: &Stmt, n: &mut ScopeNames, top: bool) {
             }
         }
         StmtKind::While { body, .. } | StmtKind::Repeat { body, .. } => collect_block(body, n, false),
-        StmtKind::For { first, second, body, .. } => {
+        StmtKind::For { first, second, body, pattern, .. } => {
             n.defined.push((first.text.clone(), None));
             if let Some(s) = second {
                 n.defined.push((s.text.clone(), None));
+            }
+            if let Some(p) = pattern {
+                n.defined.extend(p.names().into_iter().map(|x| (x.text.clone(), None)));
             }
             collect_block(body, n, false);
         }

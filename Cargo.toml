@@ -3,7 +3,7 @@ resolver = "2"
 members = ["compiler", "runtime", "cli", "web"]
 
 [workspace.package]
-version = "1.1.2"
+version = "1.2.0"
 edition = "2021"
 license = "MIT"
 authors = ["Harsh Pal Singh (@iamharshpalsingh)"]

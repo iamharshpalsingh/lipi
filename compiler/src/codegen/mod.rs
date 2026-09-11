@@ -42,7 +42,7 @@ impl Target {
 }
 
 /// Every standard module the interpreter has.
-const STD_MODULES: &[&str] = &["math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database", "js"];
+const STD_MODULES: &[&str] = &["math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database", "js", "regex", "encoding"];
 /// Global functions the JavaScript runtime provides.
 const JS_GLOBALS: &[&str] = &["toNumber", "toInteger", "toDecimal", "toString", "typeOf", "assert", "assertEqual", "sleep", "all", "timeout"];
 /// LiPi UI: pages and elements (web builds only).
@@ -52,8 +52,8 @@ pub const UI_ELEMENTS: &[&str] = &[
 
 fn js_module_available(name: &str, target: Target) -> bool {
     match target {
-        Target::Web => matches!(name, "math" | "json" | "http" | "time" | "crypto" | "js"),
-        Target::Node => matches!(name, "math" | "json" | "http" | "time" | "crypto" | "js" | "fs" | "env" | "process"),
+        Target::Web => matches!(name, "math" | "json" | "http" | "time" | "crypto" | "js" | "regex" | "encoding"),
+        Target::Node => matches!(name, "math" | "json" | "http" | "time" | "crypto" | "js" | "regex" | "encoding" | "fs" | "env" | "process"),
     }
 }
 
@@ -232,7 +232,7 @@ fn stmt_awaits(stmt: &Stmt) -> bool {
         StmtKind::Assign { target, value, .. } => {
             expr_awaits(value)
                 || match target {
-                    Target_::Name(_) => false,
+                    Target_::Name(_) | Target_::Pattern(_) => false,
                     Target_::Field(o, _) => expr_awaits(o),
                     Target_::Index(o, i) => expr_awaits(o) || expr_awaits(i),
                 }
@@ -259,7 +259,7 @@ fn expr_awaits(e: &Expr) -> bool {
         ExprKind::Template(parts) => parts.iter().any(|p| matches!(p, TemplatePart::Expr(x) if expr_awaits(x))),
         ExprKind::List(items) => items.iter().any(expr_awaits),
         ExprKind::Object(fields) => fields.iter().any(|(_, v)| expr_awaits(v)),
-        ExprKind::Unary(_, x) => expr_awaits(x),
+        ExprKind::Unary(_, x) | ExprKind::Spread(x) => expr_awaits(x),
         ExprKind::Binary(_, a, b) | ExprKind::And(a, b) | ExprKind::Or(a, b) | ExprKind::Coalesce(a, b) => expr_awaits(a) || expr_awaits(b),
         ExprKind::IfElse { cond, then, otherwise } => expr_awaits(cond) || expr_awaits(then) || expr_awaits(otherwise),
         ExprKind::Range { start, end, step } => expr_awaits(start) || expr_awaits(end) || step.as_deref().is_some_and(expr_awaits),
@@ -329,7 +329,7 @@ impl<'a> Gen<'a> {
     }
 
     fn module(&mut self, program: &Program, shown: &str) -> R<Module> {
-        let scope = self.new_scope(&program.body, &[], false, true, true);
+        let scope = self.new_scope(&program.body, &[], None, true, true);
         self.st.scopes.push(scope);
         self.st.ind = 2;
         let mut body = String::new();
@@ -398,7 +398,8 @@ impl<'a> Gen<'a> {
 
     // ----- scopes and names ----------------------------------------------------------------
 
-    fn new_scope(&mut self, body: &[Stmt], params: &[Param], method: bool, module: bool, js_async: bool) -> Scope {
+    /// `method`: Some(has_parent) for a type's methods, which see `self` (and `super`).
+    fn new_scope(&mut self, body: &[Stmt], params: &[Param], method: Option<bool>, module: bool, js_async: bool) -> Scope {
         let mut names = Names::default();
         collect_block(body, &mut names, true);
         let mut s = Scope { module, js_async, ..Scope::default() };
@@ -407,8 +408,11 @@ impl<'a> Gen<'a> {
             s.no_check.insert(name.to_string());
             s.params.insert(name.to_string());
         };
-        if method {
+        if let Some(has_parent) = method {
             add_param(&mut s, "self");
+            if has_parent {
+                add_param(&mut s, "super");
+            }
         }
         for p in params {
             add_param(&mut s, &p.name.text);
@@ -599,7 +603,7 @@ impl<'a> Gen<'a> {
             match &stmt.kind {
                 StmtKind::Func(f) | StmtKind::Component(f) => {
                     self.st.hoisted.insert(Rc::as_ptr(f) as usize);
-                    let js = self.func(f, false, matches!(stmt.kind, StmtKind::Component(_)))?;
+                    let js = self.func(f, None, matches!(stmt.kind, StmtKind::Component(_)))?;
                     self.line(out, &format!("{} = {js};", var(&f.name.text)));
                 }
                 StmtKind::TypeDef(t) => {
@@ -661,10 +665,10 @@ impl<'a> Gen<'a> {
                 self.nested(body, out)?;
                 self.line(out, "}");
             }
-            StmtKind::For { first, second, iter, body } => self.for_loop(first, second.as_ref(), iter, body, out)?,
+            StmtKind::For { first, second, iter, body, pattern } => self.for_loop(first, second.as_ref(), iter, body, pattern.as_ref(), out)?,
             StmtKind::Func(f) | StmtKind::Component(f) => {
                 if !self.st.hoisted.contains(&(Rc::as_ptr(f) as usize)) {
-                    let js = self.func(f, false, matches!(stmt.kind, StmtKind::Component(_)))?;
+                    let js = self.func(f, None, matches!(stmt.kind, StmtKind::Component(_)))?;
                     self.line(out, &format!("{} = {js};", var(&f.name.text)));
                 }
             }
@@ -782,7 +786,7 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    fn for_loop(&mut self, first: &Name, second: Option<&Name>, iter: &Expr, body: &[Stmt], out: &mut String) -> R<()> {
+    fn for_loop(&mut self, first: &Name, second: Option<&Name>, iter: &Expr, body: &[Stmt], pattern: Option<&Pattern>, out: &mut String) -> R<()> {
         let (k, v) = (self.fresh("$k"), self.fresh("$v"));
         self.line(out, "{");
         self.st.ind += 1;
@@ -822,6 +826,9 @@ impl<'a> Gen<'a> {
                 }
                 None => self.line(out, &format!("{} = {p}.keyed ? {k} : {v};", var(&first.text))),
             }
+        }
+        if let Some(pat) = pattern {
+            self.destructure(pat, &var(&first.text), iter.span, out)?;
         }
         self.block(body, out)?;
         self.st.ind -= 1;
@@ -893,8 +900,57 @@ impl<'a> Gen<'a> {
                     }
                 }
             }
+            Target_::Pattern(p) => {
+                let v = self.expr(value)?;
+                let t = self.temp();
+                self.line(out, &format!("{t} = {v};"));
+                self.destructure(p, &t, value.span, out)?;
+            }
         }
         Ok(())
+    }
+
+    /// Take the value in the JavaScript variable `src` apart into the pattern's variables.
+    fn destructure(&mut self, p: &Pattern, src: &str, value_span: Span, out: &mut String) -> R<()> {
+        let s = self.site(value_span, "");
+        match p {
+            Pattern::Object { fields, rest, .. } => {
+                self.line(out, &format!("$dobj({src}, {s});"));
+                for (key, name) in fields {
+                    let ks = self.site(key.span, "");
+                    self.store(name, format!("$get({src}, {}, {ks}, false)", js_str(&key.text)), out);
+                }
+                if let Some(r) = rest {
+                    let keys: Vec<String> = fields.iter().map(|(k, _)| js_str(&k.text)).collect();
+                    self.store(r, format!("$drest({src}, [{}])", keys.join(", ")), out);
+                }
+            }
+            Pattern::List { items, rest, .. } => {
+                self.line(out, &format!("$dlist({src}, {}, {s});", items.len()));
+                for (i, item) in items.iter().enumerate() {
+                    if let Some(n) = item {
+                        self.store(n, format!("{src}[{i}]"), out);
+                    }
+                }
+                if let Some(r) = rest {
+                    self.store(r, format!("{src}.slice({})", items.len()), out);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A pattern's variable gets a value: checked against its declared type, and redrawing the page for `state`.
+    fn store(&mut self, n: &Name, js: String, out: &mut String) {
+        let mut v = js;
+        if let Some(t) = self.declared_type(&n.text) {
+            let s = self.site(n.span, "");
+            v = format!("$chk({v}, {}, {}, {s})", type_js(&t), js_str(&n.text));
+        }
+        self.line(out, &format!("{} = {v};", var(&n.text)));
+        if let Some(notify) = self.state_notify(&n.text) {
+            self.line(out, &notify);
+        }
     }
 
     fn use_stmt(&mut self, source: &str, alias: Option<&Name>, names: Option<&[Name]>, span: Span, out: &mut String) -> R<()> {
@@ -972,7 +1028,8 @@ impl<'a> Gen<'a> {
 
     // ----- functions and types -----------------------------------------------------------
 
-    fn func(&mut self, f: &FuncDecl, method: bool, component: bool) -> R<String> {
+    /// `method`: Some(has_parent) for a type's method.
+    fn func(&mut self, f: &FuncDecl, method: Option<bool>, component: bool) -> R<String> {
         let js_async = f.is_async || (f.is_lambda && block_awaits(&f.body));
         if component && (f.is_async || block_awaits(&f.body)) {
             return Err(Diagnostic::error("components draw right away, so they can't use `await`", f.name.span)
@@ -981,6 +1038,10 @@ impl<'a> Gen<'a> {
                 .into());
         }
         let mut scope = self.new_scope(&f.body, &f.params, method, false, js_async);
+        if let Some(r) = f.params.iter().find(|p| p.rest) {
+            // `...rest` always holds an Array, so it never needs the "not set yet" check.
+            scope.no_check.insert(r.name.text.clone());
+        }
         let inst = if component {
             let i = self.fresh("$inst");
             scope.inst = Some(i.clone());
@@ -1014,15 +1075,29 @@ impl<'a> Gen<'a> {
         self.st.hoisted = saved_hoisted;
         result?;
 
-        let params: Vec<String> = f.params.iter().map(|p| format!("[{},{},{}]", js_str(&p.name.text), p.default.is_some(), p.ty.as_ref().map_or("null".into(), type_js))).collect();
+        let params: Vec<String> = f
+            .params
+            .iter()
+            .map(|p| format!("[{},{},{}{}]", js_str(&p.name.text), p.default.is_some(), p.ty.as_ref().map_or("null".into(), type_js), if p.rest { ",1" } else { "" }))
+            .collect();
         let (ret, ret_site) = match &f.ret {
             Some(t) => (type_js(t), self.site(t.span, "").to_string()),
             None => ("null".into(), "null".into()),
         };
-        let meta = format!("{{n:{},p:[{}],r:{ret},rs:{ret_site},a:{js_async},l:{},c:{component}}}", js_str(&f.name.text), params.join(","), f.is_lambda);
+        let has_super = method == Some(true);
+        let meta = format!(
+            "{{n:{},p:[{}],r:{ret},rs:{ret_site},a:{js_async},l:{},c:{component}{}}}",
+            js_str(&f.name.text),
+            params.join(","),
+            f.is_lambda,
+            if has_super { ",sp:true" } else { "" }
+        );
         let mut js_params: Vec<String> = Vec::new();
-        if method {
+        if method.is_some() {
             js_params.push(var("self"));
+        }
+        if has_super {
+            js_params.push(var("super"));
         }
         js_params.extend(f.params.iter().map(|p| var(&p.name.text)));
         let mut code = format!("$fn({meta}, {}({}) => {{\n", if js_async { "async " } else { "" }, js_params.join(", "));
@@ -1055,9 +1130,18 @@ impl<'a> Gen<'a> {
         }
         let mut methods = Vec::new();
         for m in &t.methods {
-            methods.push(format!("{}: {}", js_str(&m.name.text), self.func(m, true, false)?));
+            methods.push(format!("{}: {}", js_str(&m.name.text), self.func(m, Some(t.parent.is_some()), false)?));
         }
-        Ok(format!("$type({}, [{}], {{{}}})", js_str(&t.name.text), fields.join(", "), methods.join(", ")))
+        let parent = match &t.parent {
+            // Looked up when first needed, so the parent may be defined later in the file.
+            Some(p) => {
+                let read = self.read_name(&p.text, p.span)?;
+                let s = self.site(p.span, &format!(",n:{}", js_str(&p.text)));
+                format!(", () => {read}, {s}")
+            }
+            None => String::new(),
+        };
+        Ok(format!("$type({}, [{}], {{{}}}{parent})", js_str(&t.name.text), fields.join(", "), methods.join(", ")))
     }
 
     // ----- expressions -------------------------------------------------------------------
@@ -1066,7 +1150,7 @@ impl<'a> Gen<'a> {
         let mut pos = Vec::new();
         let mut named = Vec::new();
         for a in args {
-            let v = self.expr(&a.value)?;
+            let v = self.spreadable(&a.value, 1)?;
             match &a.name {
                 Some(n) => named.push(format!("{}: {v}", js_str(&n.text))),
                 None => pos.push(v),
@@ -1074,6 +1158,16 @@ impl<'a> Gen<'a> {
         }
         let named = if named.is_empty() { "null".to_string() } else { format!("{{{}}}", named.join(", ")) };
         Ok((format!("[{}]", pos.join(", ")), named))
+    }
+
+    /// An item of an Array literal (`into` 0) or a call's argument (`into` 1): `...x` spreads.
+    fn spreadable(&mut self, e: &Expr, into: u8) -> R<String> {
+        if let ExprKind::Spread(inner) = &e.kind {
+            let v = self.expr(inner)?;
+            let s = self.site(inner.span, "");
+            return Ok(format!("...$sp({v}, {s}, {into})"));
+        }
+        self.expr(e)
     }
 
     /// The value before `?.`: a field missing from a plain Object gives null.
@@ -1111,16 +1205,24 @@ impl<'a> Gen<'a> {
             ExprKind::Null => "null".into(),
             ExprKind::Ident(name) => self.read_name(name, e.span)?,
             ExprKind::List(items) => {
-                let items = items.iter().map(|x| self.expr(x)).collect::<R<Vec<_>>>()?;
+                let items = items.iter().map(|x| self.spreadable(x, 0)).collect::<R<Vec<_>>>()?;
                 format!("[{}]", items.join(", "))
             }
             ExprKind::Object(fields) => {
                 let mut pairs = Vec::new();
                 for (k, v) in fields {
-                    pairs.push(format!("[{}, {}]", js_str(&k.text), self.expr(v)?));
+                    match &v.kind {
+                        ExprKind::Spread(inner) => {
+                            let js = self.expr(inner)?;
+                            let s = self.site(inner.span, "");
+                            pairs.push(format!("...$spo({js}, {s})"));
+                        }
+                        _ => pairs.push(format!("[{}, {}]", js_str(&k.text), self.expr(v)?)),
+                    }
                 }
                 format!("$obj([{}])", pairs.join(", "))
             }
+            ExprKind::Spread(inner) => self.expr(inner)?,
             ExprKind::Unary(UnaryOp::Neg, inner) => {
                 let v = self.expr(inner)?;
                 let s = self.site_expr(inner);
@@ -1197,7 +1299,7 @@ impl<'a> Gen<'a> {
                 let s = self.site(index.span, &format!("{extra}{}", Self::obj_hint(object)));
                 format!("$idx({o}, {i}, {s})")
             }
-            ExprKind::Lambda(f) => self.func(f, false, false)?,
+            ExprKind::Lambda(f) => self.func(f, None, false)?,
             ExprKind::Await(inner) => {
                 let v = self.expr(inner)?;
                 let s = self.site(e.span, "");

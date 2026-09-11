@@ -1,0 +1,7 @@
+ERROR LIP1004: Arrays don't have "includes"
+
+tests/conformance/e5_javascript_habit.lipi:2:12
+    show items.includes(2)
+               ^^^^^^^^
+
+Hint: LiPi calls this contains: items.contains(x)

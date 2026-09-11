@@ -116,6 +116,13 @@ fn string_method(it: &mut Interpreter, s: &Rc<str>, name: &str, a: &mut Args) ->
         }
         "reverse" => Value::string(s.chars().rev().collect()),
         "toNumber" => to_number(&Value::Str(s.clone())),
+        "lastIndexOf" => {
+            let needle = text(it, a, 0, "text")?;
+            match s.rfind(&*needle) {
+                Some(b) => Value::Int(s[..b].chars().count() as i64),
+                None => Value::Nil,
+            }
+        }
         _ => return Ok(None),
     }))
 }
@@ -294,9 +301,29 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
         }
         "sort" => {
             let mut items = snapshot();
-            check_sortable(it, a, &items)?;
-            items.sort_by(|x, y| compare_values(x, y).unwrap_or(Ordering::Equal));
-            Value::list(items)
+            if matches!(a.get(0, "compare"), None | Some(Value::Nil)) {
+                check_sortable(it, a, &items)?;
+                items.sort_by(|x, y| compare_values(x, y).unwrap_or(Ordering::Equal));
+                Value::list(items)
+            } else {
+                // `items.sort((a, b) => a - b)`: a negative result puts a first.
+                let f = callable(it, a, 0, "compare")?;
+                let mut compare = |x: &Value, y: &Value| -> Result<Ordering, Flow> {
+                    let r = it.call_callback(&f, vec![x.clone(), y.clone()], span)?;
+                    match r.as_f64() {
+                        Some(d) if d < 0.0 => Ok(Ordering::Less),
+                        Some(d) if d > 0.0 => Ok(Ordering::Greater),
+                        Some(_) => Ok(Ordering::Equal),
+                        None => Err(it.err(
+                            "LIP5008",
+                            format!("the function given to sort() must return a number, but it returned {}", with_article(&r.type_name())),
+                            span,
+                            Some("Return a negative number when a comes first, a positive one when b comes first, and 0 when they're equal: items.sort((a, b) => a - b)".into()),
+                        )),
+                    }
+                };
+                Value::list(merge_sort(items, &mut compare)?)
+            }
         }
         "sortBy" => {
             let f = callable(it, a, 0, "function")?;
@@ -376,8 +403,158 @@ fn list_method(it: &mut Interpreter, l: &Rc<RefCell<Vec<Value>>>, name: &str, a:
             }
             Value::list(out)
         }
+        "findIndex" => {
+            let f = callable(it, a, 0, "function")?;
+            for (i, item) in snapshot().into_iter().enumerate() {
+                let hit = it.call_callback(&f, vec![item, Value::Int(i as i64)], span)?;
+                if it.expect_bool(&hit, span, &what)? {
+                    return Ok(Some(Value::Int(i as i64)));
+                }
+            }
+            Value::Nil
+        }
+        "findLast" => {
+            let f = callable(it, a, 0, "function")?;
+            let items = snapshot();
+            for i in (0..items.len()).rev() {
+                let hit = it.call_callback(&f, vec![items[i].clone(), Value::Int(i as i64)], span)?;
+                if it.expect_bool(&hit, span, &what)? {
+                    return Ok(Some(items[i].clone()));
+                }
+            }
+            Value::Nil
+        }
+        "flatMap" => {
+            let f = callable(it, a, 0, "function")?;
+            let mut out = Vec::new();
+            for (i, item) in snapshot().into_iter().enumerate() {
+                match it.call_callback(&f, vec![item, Value::Int(i as i64)], span)? {
+                    Value::List(inner) => out.extend(inner.borrow().iter().cloned()),
+                    other => out.push(other),
+                }
+            }
+            Value::list(out)
+        }
+        "shift" => {
+            if l.borrow().is_empty() {
+                return Err(it.err("LIP5001", "cannot shift from an empty Array", span, Some("Check .isEmpty() first.".into())));
+            }
+            l.borrow_mut().remove(0)
+        }
+        "unshift" => {
+            if a.pos.is_empty() {
+                return Err(it.err("LIP5008", "unshift() needs an item to add", span, None));
+            }
+            let items: Vec<Value> = a.pos.drain(..).collect();
+            l.borrow_mut().splice(0..0, items);
+            Value::Nil
+        }
+        "groupBy" => {
+            let f = callable(it, a, 0, "function")?;
+            let mut groups = Fields::new();
+            for item in snapshot() {
+                let k = it.call_callback(&f, vec![item.clone()], span)?;
+                if !matches!(k, Value::Str(_) | Value::Int(_) | Value::Num(_) | Value::Bool(_)) {
+                    return Err(it.err(
+                        "LIP5008",
+                        format!("the function given to groupBy() must return a String, a number or a Boolean, but it returned {}", with_article(&k.type_name())),
+                        span,
+                        Some("Its result names the group, for example: people.groupBy(p => p.city)".into()),
+                    ));
+                }
+                if let Value::List(g) = groups.entry(k.display()).or_insert_with(|| Value::list(Vec::new())) {
+                    g.borrow_mut().push(item);
+                }
+            }
+            Value::object(groups)
+        }
+        "lastIndexOf" => {
+            let item = need(it, a, 0, "item")?;
+            let found = l.borrow().iter().rposition(|x| x.equals(item));
+            found.map_or(Value::Nil, |i| Value::Int(i as i64))
+        }
         _ => return Ok(None),
     }))
+}
+
+/// A stable merge sort whose comparison can fail (it calls a LiPi function).
+/// Stable like JavaScript's sort, so both engines give the same order.
+fn merge_sort(mut items: Vec<Value>, compare: &mut dyn FnMut(&Value, &Value) -> Result<Ordering, Flow>) -> Result<Vec<Value>, Flow> {
+    if items.len() <= 1 {
+        return Ok(items);
+    }
+    let right = items.split_off(items.len() / 2);
+    let left = merge_sort(items, compare)?;
+    let right = merge_sort(right, compare)?;
+    let mut out = Vec::with_capacity(left.len() + right.len());
+    let (mut l, mut r) = (left.into_iter().peekable(), right.into_iter().peekable());
+    while let (Some(x), Some(y)) = (l.peek(), r.peek()) {
+        let take_right = compare(y, x)? == Ordering::Less;
+        out.push(if take_right { r.next() } else { l.next() }.expect("peeked"));
+    }
+    out.extend(l);
+    out.extend(r);
+    Ok(out)
+}
+
+/// `n.toFixed(digits)`, exactly like JavaScript's: the decimal closest to the
+/// number's exact value, with halfway cases rounded away from zero.
+fn to_fixed(it: &Interpreter, x: f64, digits: i64, span: lipi_compiler::Span) -> Result<String, Flow> {
+    if !(0..=100).contains(&digits) {
+        return Err(it.err("LIP5008", "toFixed() needs digits from 0 to 100", span, None));
+    }
+    if x.is_nan() {
+        return Ok("NaN".into());
+    }
+    if x.is_infinite() {
+        return Ok(if x > 0.0 { "infinity" } else { "-infinity" }.into());
+    }
+    if x.abs() >= 1e21 {
+        return Err(it.err("LIP5008", "toFixed() works with numbers below 1e21", span, Some("For huge numbers, use toString(x).".into())));
+    }
+    let d = digits as usize;
+    let m = x.abs();
+    // Is m exactly halfway between two answers? Then m = odd × 2^-(d+1).
+    let bits = m.to_bits();
+    let exponent = ((bits >> 52) & 0x7ff) as i64;
+    let (mut mantissa, mut e2) = if exponent == 0 { (bits & ((1 << 52) - 1), -1074) } else { ((bits & ((1 << 52) - 1)) | (1 << 52), exponent - 1075) };
+    let tie = mantissa != 0 && {
+        while mantissa & 1 == 0 {
+            mantissa >>= 1;
+            e2 += 1;
+        }
+        e2 == -(d as i64 + 1)
+    };
+    let text = if tie {
+        // Rust rounds exact halves to even; JavaScript rounds them up. Print one
+        // more (exact) digit, drop the final 5 and round up by hand.
+        let mut s = format!("{m:.*}", d + 1);
+        s.pop();
+        if s.ends_with('.') {
+            s.pop();
+        }
+        let mut digits: Vec<u8> = s.into_bytes();
+        let mut i = digits.len();
+        loop {
+            if i == 0 {
+                digits.insert(0, b'1');
+                break;
+            }
+            i -= 1;
+            match digits[i] {
+                b'.' => continue,
+                b'9' => digits[i] = b'0',
+                c => {
+                    digits[i] = c + 1;
+                    break;
+                }
+            }
+        }
+        String::from_utf8(digits).expect("ASCII digits")
+    } else {
+        format!("{m:.*}", d)
+    };
+    Ok(if x < 0.0 { format!("-{text}") } else { text })
 }
 
 fn number_method(it: &mut Interpreter, n: &Value, name: &str, a: &mut Args) -> Result<Option<Value>, Flow> {
@@ -396,6 +573,10 @@ fn number_method(it: &mut Interpreter, n: &Value, name: &str, a: &mut Args) -> R
         ("abs", Value::Int(i)) => Value::Int(i.checked_abs().ok_or_else(|| it.err("LIP5009", "this Integer calculation overflowed", a.span, None))?),
         ("abs", _) => Value::Num(x.abs()),
         ("toString", _) => Value::string(n.display()),
+        ("toFixed", _) => {
+            let digits = opt_int(it, a, 0, "digits")?.unwrap_or(0);
+            Value::string(to_fixed(it, x, digits, a.span)?)
+        }
         _ => return Ok(None),
     }))
 }

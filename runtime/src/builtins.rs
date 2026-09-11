@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-pub const MODULES: &[&str] = &["math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database", "js"];
+pub const MODULES: &[&str] = &["math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database", "js", "regex", "encoding"];
 
 // ----- argument helpers (shared with other modules) ------------------------------
 
@@ -21,7 +21,7 @@ pub fn need<'a>(it: &Interpreter, a: &'a Args, i: usize, pname: &str) -> Result<
     a.get(i, pname).ok_or_else(|| it.err("LIP5008", format!("{}() needs \"{pname}\"", a.name), a.span, None))
 }
 
-fn wrong(it: &Interpreter, a: &Args, pname: &str, expected: &str, got: &Value) -> Flow {
+pub(crate) fn wrong(it: &Interpreter, a: &Args, pname: &str, expected: &str, got: &Value) -> Flow {
     it.err(
         "LIP5008",
         format!("{}() expects \"{pname}\" to be {}, but got {}", a.name, with_article(expected), with_article(&got.type_name())),
@@ -293,6 +293,8 @@ pub fn install(g: &Rc<Env>) {
     def("server", module("server", crate::server::entries()));
     def("crypto", module("crypto", crate::crypto::entries()));
     def("database", crate::db::module());
+    def("regex", crate::pattern::module());
+    def("encoding", crate::encoding::module());
     // JavaScript interop only exists in `lipi build` output; see Interpreter::js_only.
     def("js", module("js", Vec::new()));
     // Routes can also be declared without the `server.` prefix: get "/users" ...
@@ -417,6 +419,35 @@ fn math_module() -> Value {
                         if (want_min && fy < fx) || (!want_min && fy > fx) { y } else { x }
                     })
                     .unwrap_or(Value::Nil))
+            }),
+        ));
+    }
+    entries.push(to_int("trunc", f64::trunc));
+    // Bit operations on 64-bit Integers.
+    for (name, op) in [("bitAnd", 0u8), ("bitOr", 1), ("bitXor", 2)] {
+        entries.push((
+            name,
+            Value::native(name, move |it, a| {
+                let (x, y) = (int(it, a, 0, "a")?, int(it, a, 1, "b")?);
+                Ok(Value::Int(match op {
+                    0 => x & y,
+                    1 => x | y,
+                    _ => x ^ y,
+                }))
+            }),
+        ));
+    }
+    entries.push(("bitNot", Value::native("bitNot", |it, a| Ok(Value::Int(!int(it, a, 0, "a")?)))));
+    for (name, left) in [("shiftLeft", true), ("shiftRight", false)] {
+        entries.push((
+            name,
+            Value::native(name, move |it, a| {
+                let x = int(it, a, 0, "x")?;
+                let bits = int(it, a, 1, "bits")?;
+                if !(0..=63).contains(&bits) {
+                    return Err(it.err("LIP5008", format!("{name}() needs bits from 0 to 63"), a.span, None));
+                }
+                Ok(Value::Int(if left { x.wrapping_shl(bits as u32) } else { x >> bits }))
             }),
         ));
     }
@@ -623,8 +654,27 @@ fn time_module() -> Value {
                     Ok(Value::string(format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")))
                 }),
             ),
+            ("after", Value::native("after", |it, a| timer(it, a, false))),
+            ("every", Value::native("every", |it, a| timer(it, a, true))),
         ],
     )
+}
+
+/// `time.after(ms, block)` and `time.every(ms, block)`: the block runs later
+/// (after the main program, like in JavaScript). The result's stop() cancels it.
+fn timer(it: &mut Interpreter, a: &Args, every: bool) -> Result<Value, Flow> {
+    let ms = num(it, a, 0, "milliseconds")?;
+    let f = callable(it, a, 1, "block")?;
+    let stopped = it.schedule(ms, every, f, a.span);
+    let mut fields = Fields::new();
+    fields.insert(
+        "stop".into(),
+        Value::native("stop", move |_, _| {
+            stopped.set(true);
+            Ok(Value::Nil)
+        }),
+    );
+    Ok(Value::object(fields))
 }
 
 fn process_module() -> Value {

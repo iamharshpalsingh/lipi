@@ -13,6 +13,7 @@ sha2 = "0.10"
 hmac = "0.12"
 pbkdf2 = "0.12"
 base64 = "0.22"
+regex = "1"
 getrandom = "0.2"
 # SQLite, compiled from source (needs a C compiler: MinGW GCC on Windows-GNU).
 rusqlite = { version = "0.32", features = ["bundled", "column_decltype"] }

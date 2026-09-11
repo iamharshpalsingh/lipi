@@ -1,7 +1,29 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 
+JavaScript's everyday features, in both engines (`lipi run` and `lipi build`),
+with the same results:
+
+- Spread and rest: `[...a, ...b]`, `{...defaults, color: "red"}`,
+  `f(...args)` and `total(first, ...others)`.
+- Patterns: `{name, age: years, ...others} = user`, `[first, _, ...more] = items`,
+  `[a, b] = [b, a]`, and `for {name, age} in people`.
+- `type Admin extends User`, with `super.method()` and subtypes accepted
+  wherever the parent type is expected.
+- The `regex` module (`test find findAll replace split`, with `ignoreCase:`
+  and `multiline:`) and the `encoding` module (Base64, URL encoding, hex).
+- Timers: `time.after(ms)` and `time.every(ms)` with a block, like
+  setTimeout and setInterval.
+- New methods: `findIndex findLast flatMap shift unshift groupBy lastIndexOf`,
+  `sort((a, b) => ...)`, `lastIndexOf` on Strings and `toFixed` on numbers;
+  `math.trunc` and 64-bit bit operations (`bitAnd bitOr bitXor bitNot
+  shiftLeft shiftRight`).
+- In 'single quotes', a backslash that isn't a known escape stays as it is,
+  so regex patterns read naturally: `'\d+'`.
+- Using a JavaScript name (`includes`, `forEach`, `some`, `toUpperCase`,
+  `new`, `class`, `setTimeout`...) gives a hint with the LiPi way.
+- Course chapter 13 shows the JavaScript way and the LiPi way side by side.
 - The LiPi Playground: write LiPi in a browser and see it run, with nothing
   to install. The compiler runs in the page as WebAssembly (the new `web`
   crate) and programs run in a sandboxed frame. It has examples, error

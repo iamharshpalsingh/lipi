@@ -1,0 +1,140 @@
+# LiPi 1.2: the JavaScript features, in both engines.
+
+# ----- spread and rest -----
+first = [1, 2]
+more = [...first, 3, ...[4, 5]]
+show more
+show [..."hey"]
+base = {color: "red", size: 2}
+item = {...base, size: 3, name: "cup"}
+show item
+
+total(label, ...numbers)
+    return "{label}: {numbers.sum()} from {numbers.length} numbers"
+
+show total("none")
+show total("sum", 1, 2, 3)
+show total(...["spread", 10, 20])
+show [3, 1, 2].map((...xs) => xs.length)
+
+# ----- patterns -----
+{name, size: howBig, ...others} = item
+show name, howBig, others
+[a, _, c, ...rest] = [10, 20, 30, 40, 50]
+show a, c, rest
+x = 1
+y = 2
+[x, y] = [y, x]
+show x, y
+people = [{name: "Asha", age: 31}, {name: "Ravi", age: 25}]
+for {name, age} in people
+    show "{name} is {age}"
+for [i, letter] in [[1, "a"], [2, "b"]]
+    show i, letter
+{floor, max} = math
+show floor(2.7), max(3, 9)
+
+wrongKind()
+    return [1, 2]
+
+try
+    {missing} = {here: 1}
+catch e
+    show e.code, e.message
+try
+    [p, q] = [1]
+catch e
+    show e.code, e.message
+try
+    {z} = wrongKind()
+catch e
+    show e.code, e.message
+
+# ----- types that extend other types -----
+type Animal
+    name: String
+    sound = "..."
+
+    speak()
+        return "{self.name} says {self.sound}"
+
+    describe()
+        return "an animal called {self.name}"
+
+type Dog extends Animal
+    sound = "woof"
+    tricks: [String] = []
+
+    speak()
+        return super.speak() + "!"
+
+type Puppy extends Dog
+
+d = Dog("Rex", tricks: ["sit"])
+show d.speak()
+show d.describe()
+show d
+pup = Puppy("Tiny")
+show pup.speak(), typeOf(pup)
+
+introduce(animal: Animal)
+    return "meet " + animal.name
+
+show introduce(pup)
+
+# ----- regex -----
+text = "Order 66 shipped on 2026-09-12, order 7 on 2026-10-01"
+show regex.test('\d{4}-\d{2}', text)
+dates = regex.findAll('(?<year>\d{4})-(\d{2})-(\d{2})', text)
+show dates.map(m => m.named.year), dates[0].groups, dates[0].index
+found = regex.find('order (\d+)', text, ignoreCase: true)
+show found.text, found.groups[0], found.index
+show regex.find('xyz', text)
+show regex.replace('(\d{4})-(\d{2})-(\d{2})', text, '$3/$2/$1')
+show regex.replace('\d+', "a1b22", m => "<{m.text}>")
+show regex.split('\s*,\s*', "a , b,c")
+show regex.findAll('b*', "abc").map(m => m.index)
+show regex.test('^hello$', "Hello", ignoreCase: true)
+show regex.findAll('^\w+', "one\ntwo", multiline: true).map(m => m.text)
+show regex.find('é(.)', "café au lait").index
+try
+    regex.test('(a)\1', "aa")
+catch e
+    show e.code, e.message
+try
+    regex.test('(', "x")
+catch e
+    show e.message
+
+# ----- encoding -----
+show encoding.base64Encode("Namaste 🙏"), encoding.base64Decode("SGVsbG8=")
+show encoding.urlEncode("a b&c=é"), encoding.urlDecode("a%20b%26")
+show encoding.hexEncode("hi"), encoding.hexDecode("6869")
+
+# ----- more methods -----
+nums = [5, 3, 8, 1]
+show nums.findIndex(n => n > 4), nums.findIndex(n => n > 100), nums.findLast(n => n < 5)
+show [[1, 2], [3]].flatMap(v => v), [1, 2].flatMap(v => [v, v * 10])
+queue = [1, 2, 3]
+show queue.shift(), queue
+queue.unshift(0, 0.5)
+show queue, [1, 2, 1].lastIndexOf(1), "banana".lastIndexOf("an")
+show people.groupBy(person => person.age > 30)
+show nums.sort((m, n) => n - m), nums.sort()
+show [3.14159.toFixed(2), 2.5.toFixed(0), (-1.005).toFixed(2), 7.toFixed(3), 0.125.toFixed(2)]
+show math.bitAnd(12, 10), math.bitOr(12, 10), math.bitXor(12, 10), math.bitNot(0)
+show math.shiftLeft(1, 62), math.shiftLeft(1, 63), math.shiftRight(-16, 2), math.trunc(-2.7)
+
+# ----- timers (they run after the main program, as in JavaScript) -----
+ticks = 0
+
+tick()
+    ticks += 1
+    show "tick {ticks}"
+    if ticks == 3
+        clock.stop()
+
+clock = time.every(5, tick)
+time.after 40
+    show "after 40 ms: {ticks} ticks"
+show "main program done"

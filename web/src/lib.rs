@@ -16,7 +16,7 @@ use lipi_compiler::codegen::{self, Target};
 /// like `lipi run` and `lipi build` do.
 pub const BUILTINS: &[&str] = &[
     "toNumber", "toInteger", "toDecimal", "toString", "typeOf", "input", "assert", "assertEqual", "sleep", "all", "timeout",
-    "math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database", "js",
+    "math", "json", "fs", "env", "http", "time", "process", "server", "crypto", "database", "js", "regex", "encoding",
     "get", "post", "put", "patch", "delete",
     "page", "card", "row", "column", "section", "heading", "text", "button", "link", "image", "field", "checkbox", "element", "navigate",
 ];
