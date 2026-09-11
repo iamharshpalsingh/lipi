@@ -1,0 +1,6 @@
+ERROR: expected a number
+  --> tests/language/error_type_mismatch.lipi:2:9
+   |
+ 2 | price = age + 10
+   |         ^^^
+Hint: "age" is a string. Convert it with to_number(age), or use a numeric value.

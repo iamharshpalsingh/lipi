@@ -1,0 +1,53 @@
+# JSON, files, math, env, time, async tasks, modules
+from "./_helpers.lipi" import shout, VERSION
+import "./_helpers.lipi" as helpers
+
+show shout("modules work"), VERSION, helpers.shout("again")
+
+data = {name: "Lipi", tags: ["simple", "powerful"], year: 2026, ok: true, none: nil}
+text = json.stringify(data)
+show text
+back = json.parse(text)
+show back.tags[1], back == data
+show json.stringify({a: [1, 2]}, pretty: true)
+
+path = "_stdlib_tmp.txt"
+fs.write(path, "first line\n")
+fs.append(path, "second line\n")
+show fs.read(path).lines(), fs.exists(path)
+fs.delete(path)
+show fs.exists(path)
+
+show math.sqrt(16), math.floor(3.7), math.round(3.14159, 2), math.max(3, 9, 2), math.min([5, 1, 7])
+r = math.random_int(1, 6)
+show r >= 1 and r <= 6
+show math.pi.round(4)
+
+show env.get("LIPI_SURELY_UNSET_VAR", "default value")
+
+d = time.date(0)
+show d.year, d.month, d.day, d.weekday
+show time.iso(86400000)
+
+async slow_double(x)
+    await sleep(10)
+    return x * 2
+
+start = time.now()
+results = await all([slow_double(1), slow_double(2), sleep(50)])
+show results
+show time.now() - start >= 50
+
+async fails()
+    throw "async failure"
+
+task = fails()
+try
+    await task
+catch err
+    show "caught across async:", err.message
+
+try
+    await timeout(sleep(2000), 20)
+catch err
+    show err.message

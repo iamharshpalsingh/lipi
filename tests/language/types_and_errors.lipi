@@ -1,0 +1,77 @@
+# Types (structs with methods), try/catch/finally, throw
+type Point
+    x: number
+    y: number = 0
+
+    distance_to(other)
+        dx = other.x - self.x
+        dy = other.y - self.y
+        return math.sqrt(dx * dx + dy * dy)
+
+    moved(dx, dy)
+        return Point(self.x + dx, self.y + dy)
+
+a = Point(0, 0)
+b = Point(x: 3, y: 4)
+show a, b
+show a.distance_to(b)
+show b.moved(1, 1).x
+show type_of(a), type_of(1), type_of("s"), type_of([]), type_of({}), type_of(nil), type_of(show_error)
+
+show_error(err)
+    show "caught:", err.message
+
+try
+    a.z = 1
+catch err
+    show_error(err)
+
+# (Calling Point(y: 2) directly is caught before the program even runs;
+# going through a variable defers the check to runtime.)
+make_point = Point
+try
+    make_point(y: 2)
+catch err
+    show_error(err)
+
+try
+    throw "something broke"
+catch err
+    show_error(err)
+
+try
+    throw {message: "custom", code: 42}
+catch err
+    show "custom error code:", err.code
+
+try
+    items = [1, 2, 3]
+    show items[10]
+catch err
+    show_error(err)
+finally
+    show "finally runs"
+
+safe_divide(a, b)
+    if b == 0
+        throw "can't divide {a} by zero"
+    return a / b
+
+try
+    safe_divide(1, 0)
+catch problem
+    show_error(problem)
+
+try
+    json.parse('{bad json}')
+catch err
+    show "json error caught"
+
+typed(x: number) -> string
+    return "number {x}"
+
+label = to_string(5)
+try
+    typed(label)
+catch err
+    show_error(err)

@@ -1,0 +1,7 @@
+[package]
+name = "lipi_compiler"
+description = "Lexer, parser, AST and semantic checker for the Lipi language"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

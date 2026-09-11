@@ -1,0 +1,10 @@
+[package]
+name = "lipi_runtime"
+description = "Interpreter, values and standard library for the Lipi language"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lipi_compiler = { path = "../compiler" }
+indexmap = "2"
+serde_json = { version = "1", features = ["preserve_order"] }

@@ -1,0 +1,60 @@
+# A small command-line to-do app that saves to todos.json.
+#
+#   lipi examples/todo.lipi add "Buy milk"
+#   lipi examples/todo.lipi list
+#   lipi examples/todo.lipi done 1
+#   lipi examples/todo.lipi clear
+
+const FILE = "todos.json"
+
+type Todo
+    title: string
+    done: bool = false
+
+load() -> list
+    if not fs.exists(FILE)
+        return []
+    return json.parse(fs.read(FILE)).map(item => Todo(item.title, item.done))
+
+save(todos: list)
+    fs.write(FILE, json.stringify(todos, pretty: true))
+
+show_list(todos)
+    if todos.is_empty()
+        show "Nothing to do. Add something with: add \"Buy milk\""
+        return
+    for i, todo in todos
+        mark = "x" if todo.done else " "
+        show "{i + 1}. [{mark}] {todo.title}"
+
+todos = load()
+args = process.args
+command = args.first ?? "list"
+
+match command
+    when "add"
+        title = args.slice(1).join(" ")
+        if title.is_empty()
+            show "What should I add? Try: add \"Buy milk\""
+            process.exit(1)
+        todos.push(Todo(title))
+        save(todos)
+        show "Added: {title}"
+    when "done"
+        number = to_number(args.slice(1).first ?? "")
+        if number == nil or number < 1 or number > todos.length
+            show "Give the number of a task from the list, like: done 1"
+            process.exit(1)
+        todo = todos[number - 1]
+        todo.done = true
+        save(todos)
+        show "Completed: {todo.title}"
+    when "clear"
+        remaining = todos.filter(t => not t.done)
+        save(remaining)
+        show "Removed {todos.length - remaining.length} finished task(s)."
+    when "list"
+        show_list(todos)
+    else
+        show "Unknown command `{command}`. Use add, list, done or clear."
+        process.exit(1)

@@ -1,0 +1,2 @@
+age = "twenty"
+price = age + 10

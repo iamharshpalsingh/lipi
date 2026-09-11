@@ -1,0 +1,8 @@
+# A module imported by stdlib.lipi (files starting with _ aren't run as golden tests)
+VERSION = "1.0"
+
+shout(text)
+    return text.upper() + "!"
+
+_private_helper()
+    return "hidden"

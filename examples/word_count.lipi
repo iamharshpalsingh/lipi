@@ -1,0 +1,23 @@
+# Count the most common words in a text file.
+#
+#   lipi examples/word_count.lipi README.md
+
+path = process.args.first
+if path == nil
+    show "Usage: lipi examples/word_count.lipi <file>"
+    process.exit(1)
+
+text = fs.read(path).lower()
+
+counts = {}
+for word in text.split()
+    word = word.trim()
+    if word.length < 4
+        continue
+    counts[word] = (counts[word] ?? 0) + 1
+
+top = counts.entries().sort_by(entry => -entry[1]).slice(0, 5)
+
+show "Top words in {path}:"
+for entry in top
+    show "  {entry[0].pad_end(15)} {entry[1]}"

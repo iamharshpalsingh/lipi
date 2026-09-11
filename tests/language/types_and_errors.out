@@ -1,0 +1,13 @@
+Point {x: 0, y: 0} Point {x: 3, y: 4}
+5
+4
+Point number string list object nil function
+caught: `Point` has no field `z`
+caught: missing `x` when creating a Point
+caught: something broke
+custom error code: 42
+caught: position 10 is outside the list (it has 3 items)
+finally runs
+caught: can't divide 1 by zero
+json error caught
+caught: `x` should be a number, but this is a string

@@ -1,0 +1,19 @@
+//! The Lipi compiler front end.
+//!
+//! Source text flows through: lexer → parser → AST → semantic checker.
+//! The runtime crate executes the checked AST.
+
+pub mod ast;
+pub mod checker;
+pub mod diagnostics;
+pub mod lexer;
+pub mod parser;
+pub mod suggest;
+
+pub use diagnostics::{Diagnostic, Severity, Span};
+
+/// Lex and parse a whole source file into a program.
+pub fn parse_source(source: &str) -> Result<ast::Program, Diagnostic> {
+    let tokens = lexer::Lexer::new(source).tokenize()?;
+    parser::Parser::new(source, tokens).parse_program()
+}

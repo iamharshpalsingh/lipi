@@ -1,0 +1,21 @@
+MODULES WORK! 1.0 AGAIN!
+{"name":"Lipi","tags":["simple","powerful"],"year":2026,"ok":true,"none":null}
+powerful true
+{
+  "a": [
+    1,
+    2
+  ]
+}
+["first line", "second line"] true
+false
+4 3 3.14 9 1
+true
+3.1416
+default value
+1970 1 1 thursday
+1970-01-02T00:00:00Z
+[2, 4, nil]
+true
+caught across async: async failure
+timed out after 20 ms

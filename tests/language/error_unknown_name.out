@@ -1,0 +1,6 @@
+ERROR: I don't know what `nmae` is
+  --> tests/language/error_unknown_name.lipi:2:6
+   |
+ 2 | show nmae
+   |      ^^^^
+Hint: Did you mean `name`?

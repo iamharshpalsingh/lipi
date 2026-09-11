@@ -1,0 +1,8 @@
+load_user(id)
+    users = {1: "Asha"}
+    return find(users, id)
+
+find(table, id)
+    return table.people
+
+show load_user(1)

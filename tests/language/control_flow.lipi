@@ -1,0 +1,62 @@
+# Loops, ranges, match, break/continue
+for i in 1 to 5
+    if i == 2
+        continue
+    if i == 5
+        break
+    show "i =", i
+
+for n in 10 to 0 step -5
+    show n
+
+repeat 3
+    show "hip hip"
+
+count = 0
+while count < 3
+    count += 1
+show "count:", count
+
+fruits = ["apple", "banana", "cherry"]
+for fruit in fruits
+    show fruit.upper()
+
+for index, fruit in fruits
+    show "{index}: {fruit}"
+
+prices = {tea: 10, coffee: 25}
+for item, cost in prices
+    show "{item} costs {cost}"
+
+for letter in "hi"
+    show letter
+
+grade(score)
+    match score
+        when 90 to 100
+            return "A"
+        when 75 to 89
+            return "B"
+        when 0
+            return "zero"
+        else
+            return "keep going"
+
+show grade(95), grade(80), grade(0), grade(40)
+
+day = "sun"
+match day
+    when "sat", "sun"
+        show "Weekend"
+    else
+        show "Weekday"
+
+for n in [4, 17]
+    size = "big" if n > 10 else "small"
+    show n, size, ("even" if n % 2 == 0 else "odd")
+
+match 15
+    when 15 if false
+        show "never"
+    when _
+        show "wildcard"

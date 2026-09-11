@@ -1,0 +1,67 @@
+# Functions, defaults, named arguments, closures, recursion, lambdas
+add(a, b)
+    return a + b
+
+show add(2, 3)
+
+# Functions can be used before they are defined
+show square(9)
+
+square(x: number) -> number
+    return x * x
+
+greet(name = "friend", greeting = "Hello")
+    return "{greeting}, {name}!"
+
+show greet()
+show greet("Asha")
+show greet(greeting: "Namaste", name: "Ravi")
+
+make_counter()
+    count = 0
+    increment()
+        count += 1
+        return count
+    return increment
+
+counter = make_counter()
+counter()
+counter()
+show "counter:", counter()
+
+factorial(n)
+    if n <= 1
+        return 1
+    return n * factorial(n - 1)
+
+show factorial(10)
+
+fib(n)
+    if n < 2
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+show fib(20)
+
+double = x => x * 2
+show double(21)
+pair = (a, b) => [b, a]
+show pair(1, 2)
+
+numbers = [3, 1, 4, 1, 5, 9, 2, 6]
+show numbers.map(n => n * 10)
+show numbers.filter(n => n > 3)
+show numbers.reduce((total, n) => total + n, 0)
+show numbers.sort(), numbers.sum(), numbers.max(), numbers.unique()
+show numbers.find(n => n > 4), numbers.any(n => n > 8), numbers.all(n => n > 0)
+
+apply(f, value)
+    return f(value)
+
+show apply(double, 5)
+show apply(to_string, 5) + "!"
+
+nothing()
+    show "no return value"
+
+show nothing()
