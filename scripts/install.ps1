@@ -58,6 +58,7 @@ function Unregister-FileTypes {
 
 if ($Uninstall) {
     if (Test-Path (Join-Path $Dest "lipi.exe")) { Remove-Item -Force (Join-Path $Dest "lipi.exe") }
+    Get-ChildItem $Dest -Filter "lipi.exe.old-*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
     if (-not $NoPath) {
         [Environment]::SetEnvironmentVariable("Path", (($parts | Where-Object { $_ -ne $Dest }) -join ";"), "User")
     }
@@ -73,7 +74,17 @@ if (-not (Test-Path $exe)) {
 }
 New-Item -ItemType Directory -Force $Dest | Out-Null
 $installed = Join-Path $Dest "lipi.exe"
-Copy-Item $exe $Dest -Force
+# Copies moved aside by earlier updates (see below) can go once nothing uses them.
+Get-ChildItem $Dest -Filter "lipi.exe.old-*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+try {
+    Copy-Item $exe $Dest -Force
+} catch {
+    # lipi.exe is in use (VS Code's language server or `lipi dev`). Windows
+    # lets a running program be renamed, so move it aside and put the new one in place.
+    Rename-Item -Path $installed -NewName ("lipi.exe.old-" + [DateTime]::Now.ToString("yyyyMMddHHmmss"))
+    Copy-Item $exe $Dest -Force
+    Write-Host "LiPi was running; restart VS Code and any lipi dev to use the new version."
+}
 Unblock-File $installed -ErrorAction SilentlyContinue
 
 $added = $false
