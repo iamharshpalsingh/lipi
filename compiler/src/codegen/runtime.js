@@ -100,13 +100,20 @@ function closest(name, candidates) {
   const n = Array.from(name).length;
   const limit = n <= 2 ? 1 : n <= 5 ? 2 : 3;
   const lower = name.toLowerCase(), camel = toCamel(name);
+  const first = Array.from(name)[0];
+  // Same order as lipi_compiler::suggest: distance, then same first letter,
+  // then nearest length, then alphabetical.
+  const rank = (c, d) => [d, Array.from(c)[0] === first ? 0 : 1, Math.abs(Array.from(c).length - n), c];
+  const before = (a, b) => { for (let i = 0; i < 4; i++) { if (a[i] < b[i]) return true; if (a[i] > b[i]) return false; } return false; };
   let best = null;
   for (const c of candidates) {
     if (c === name) continue;
     const d = c === camel || c.toLowerCase() === lower ? 0 : editDistance(name, c);
-    if (d <= limit && (!best || d < best[0] || (d === best[0] && c < best[1]))) best = [d, c];
+    if (d > limit) continue;
+    const r = rank(c, d);
+    if (!best || before(r, best)) best = r;
   }
-  return best ? best[1] : null;
+  return best ? best[3] : null;
 }
 function didYouMean(name, candidates) {
   const c = closest(name, candidates);

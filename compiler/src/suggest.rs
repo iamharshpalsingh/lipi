@@ -34,6 +34,8 @@ mod tests {
         assert_eq!(edit_distance("nmae", "name"), 1);
         assert_eq!(edit_distance("kitten", "sitting"), 3);
         assert_eq!(closest("nmae", ["image", "name", "age"]), Some("name"));
+        // Equal distance: the name with the same first letter wins over alphabetical order.
+        assert_eq!(closest("nmae", ["image", "naam"]), Some("naam"));
     }
 }
 
@@ -63,14 +65,23 @@ pub fn closest<'a>(name: &str, candidates: impl IntoIterator<Item = &'a str>) ->
     };
     let lower = name.to_lowercase();
     let camel = to_camel(name);
-    let mut best: Option<(usize, &'a str)> = None;
+    let first = name.chars().next();
+    let len = name.chars().count();
+    // Closest first; ties go to a name with the same first letter, then the
+    // one nearest in length, then alphabetical ("nmae" suggests "naam", not "image").
+    let rank = |c: &str, d: usize| (d, c.chars().next() != first, c.chars().count().abs_diff(len), c.to_string());
+    let mut best: Option<((usize, bool, usize, String), &'a str)> = None;
     for c in candidates {
         if c == name {
             continue;
         }
         let d = if c == camel || c.to_lowercase() == lower { 0 } else { edit_distance(name, c) };
-        if d <= limit && best.is_none_or(|(bd, bc)| d < bd || (d == bd && c < bc)) {
-            best = Some((d, c));
+        if d > limit {
+            continue;
+        }
+        let r = rank(c, d);
+        if best.as_ref().is_none_or(|(br, _)| r < *br) {
+            best = Some((r, c));
         }
     }
     best.map(|(_, c)| c)
