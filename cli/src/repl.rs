@@ -33,6 +33,7 @@ fn opens_block(line: &str, is_function: impl Fn(&str) -> bool) -> bool {
 pub fn start() -> i32 {
     let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     println!("LiPi {} — type code and press Enter. Blocks end with an empty line. Type `exit` to leave.", env!("CARGO_PKG_VERSION"));
+    println!("{}", crate::CREATOR);
     let mut it = Interpreter::new();
     let env = it.repl_env();
     let stdin = std::io::stdin();

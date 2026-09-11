@@ -4,6 +4,8 @@ Ye course **zero se** shuru hota hai. Pehle kabhi programming nahi ki? Koi baat 
 
 Course ka har code example test kiya gaya hai: LiPi ka test suite har example ko chala ke check karta hai ki output wahi aata hai jo yahan likha hai.
 
+**LiPi ke creator:** LiPi ko **Harsh Pal Singh** ([@iamharshpalsingh](https://github.com/iamharshpalsingh)) ne banaya hai. Unka sapna: ek aisi language jo seekhne me aasaan ho, par jisse website, backend, database se lekar aage mobile, desktop aur AI tak sab kuch bane.
+
 ---
 
 ## Chapters

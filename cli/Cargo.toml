@@ -4,6 +4,7 @@ description = "The Lipi command-line tool: run, check, test and create Lipi proj
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
 repository.workspace = true
 
 [[bin]]

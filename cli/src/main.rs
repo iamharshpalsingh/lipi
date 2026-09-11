@@ -11,6 +11,8 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Who made LiPi, shown by `lipi --version`, `lipi help` and the interactive prompt.
+pub const CREATOR: &str = "Created by Harsh Pal Singh (@iamharshpalsingh)";
 
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -98,10 +100,12 @@ fn run(args: Vec<String>) -> i32 {
         Some("ast") => cmd_debug(&rest(), true),
         Some("--version" | "-v" | "-V" | "version") => {
             println!("lipi {VERSION}");
+            println!("{CREATOR}");
             0
         }
         Some("help" | "--help" | "-h") => {
             print!("{HELP}");
+            println!("\n{CREATOR}");
             0
         }
         Some("build") => cmd_build(&rest()),

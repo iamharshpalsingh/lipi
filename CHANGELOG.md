@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.2
+
+- Credits: LiPi was created by Harsh Pal Singh (@iamharshpalsingh). It's shown
+  by `lipi --version`, `lipi help` and the interactive prompt, and in the
+  README, license, specification, course and VS Code extension.
+
 ## 1.1.1
 
 - "did you mean" suggestions: when two names are equally close, the one that

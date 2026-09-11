@@ -8,6 +8,8 @@
 
 LiPi ek programming language hai. Programming language matlab computer se baat karne ka tareeka. Tum computer ko kuch kaam bataate ho (jaise "ye message dikhao", "ye hisaab lagao"), aur computer wo karta hai.
 
+LiPi ko **Harsh Pal Singh** ([@iamharshpalsingh](https://github.com/iamharshpalsingh)) ne banaya hai. Naam "लिपि" (lipi) ka matlab hai "script, likhne ka tareeka".
+
 LiPi ko **aasaan** banaya gaya hai: kam symbols, saaf words, aur jab galti ho to computer batata hai ki galti **kahan** hai aur **kaise theek** karein.
 
 LiPi se tum bana sakte ho:

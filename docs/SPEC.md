@@ -1,5 +1,7 @@
 # LiPi Language Specification — v1.0
 
+LiPi was created by Harsh Pal Singh ([@iamharshpalsingh](https://github.com/iamharshpalsingh)).
+
 > **LiPi** — Unified Development Language. *Ancient roots. Modern code.*
 > Easy to start. Hard to outgrow.
 

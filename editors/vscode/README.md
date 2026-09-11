@@ -1,6 +1,7 @@
 # LiPi for Visual Studio Code
 
-Language support for **LiPi**, the Unified Development Language.
+Language support for **LiPi**, the Unified Development Language, created by
+**Harsh Pal Singh** ([@iamharshpalsingh](https://github.com/iamharshpalsingh)).
 
 - **Errors and warnings as you type**, with the same codes and hints as `lipi check` and `lipi lint`
 - **Completion** for keywords, the standard library (`math.`, `json.`, `server.`...) and your own names

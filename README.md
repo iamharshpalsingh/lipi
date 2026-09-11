@@ -9,6 +9,8 @@
 
 **Unified Development Language** · *Ancient roots. Modern code.* · Easy to start. Hard to outgrow.
 
+Created by **Harsh Pal Singh** ([@iamharshpalsingh](https://github.com/iamharshpalsingh)).
+
 LiPi (लिपि, "script, writing system") is a beginner-friendly, general-purpose
 language with a single readable syntax and one toolchain for scripts, CLIs,
 backends, APIs and, later, web, desktop and mobile. This repository holds the
@@ -183,6 +185,14 @@ The full reference is [docs/SPEC.md](docs/SPEC.md). From 1.0 the language is
 frozen: programs keep working across 1.x releases
 ([docs/STABILITY.md](docs/STABILITY.md)), and the promise is checked by the
 conformance suite in [`tests/conformance`](tests/conformance).
+
+## Creator
+
+LiPi was created by **Harsh Pal Singh**
+([@iamharshpalsingh](https://github.com/iamharshpalsingh)), who designed the
+language and its roadmap: one readable language for scripts, backends, web
+apps and, next, mobile, desktop and AI. Learn it with the Hinglish course
+[LiPi Paathshala](docs/learn/README.md).
 
 ## Repository layout
 
