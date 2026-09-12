@@ -119,6 +119,45 @@ Average: 80.75
 
 `total += m` ka matlab `total = total + m`. Aise hi `-=`, `*=`, `/=` bhi hote hain.
 
+Dhyan do: `total` loop se **pehle** banaya. Ye zaroori hai — loop ka apna
+variable (`m`) sirf loop ke andar rehta hai.
+
+---
+
+## Loop ka variable loop ka hi hota hai
+
+Har chakkar me LiPi loop ke variable ko **naya** banata hai. Iska fayda tab
+dikhta hai jab aap loop ke andar function banate ho:
+
+```lipi
+greeters = []
+for name in ["Asha", "Ravi", "Meera"]
+    greeters.push(() => "Namaste, {name}!")
+
+for g in greeters
+    show g()
+```
+
+```output
+Namaste, Asha!
+Namaste, Ravi!
+Namaste, Meera!
+```
+
+Har function ne apna `name` yaad rakha. (JavaScript me `var` ke saath yahi
+code teen baar "Meera" deta hai — LiPi me ye galti ho hi nahi sakti.)
+
+Doosri taraf, loop khatam hone ke baad loop ka variable gayab ho jaata hai:
+
+```lipi fragment
+for i in 1 to 3
+    show i
+show i          # ERROR LIP1002: undefined variable "i"
+```
+
+Jo cheez loop ke baad chahiye, use loop se pehle banao — jaise upar wala
+`total`.
+
 ---
 
 ## while: jab tak condition sach hai
@@ -238,5 +277,8 @@ for n in 1 to 30
 | `while condition` | jab tak kuch sach hai |
 | `repeat 5` | bas 5 baar |
 | `break` / `continue` | rukna / skip karna |
+
+Loop ka variable har chakkar me naya banta hai aur loop ke baad nahi milta.
+Jo baad me chahiye, wo loop se pehle banao.
 
 > **Teacher tip:** FizzBuzz (exercise 4) interview ka famous sawaal hai. Students ko pehle khud try karne do, 10 minute baad solution dikhao.

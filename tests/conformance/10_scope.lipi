@@ -14,9 +14,11 @@ localOnly()
 
 show localOnly()
 
+# SPEC §7: a `for` variable belongs to the loop - a fresh one every round,
+# and gone once the loop ends. What the body assigns stays behind.
 for i in 1 to 3
     last = i
-show last, i
+show last
 
 outer()
     value = "outer"
@@ -27,6 +29,7 @@ outer()
 
 show outer()
 
+# Each round binds `n` anew, so every function keeps the number it was made with.
 makeAdders()
     adders = []
     for n in 1 to 3

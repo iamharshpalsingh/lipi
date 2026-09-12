@@ -1,15 +1,21 @@
 //! Which variables a function body (or file) creates. Shared by the
 //! interpreter's slot resolver and the JavaScript code generator, so both apply
 //! LiPi's scope rule the same way: assignment updates the nearest existing
-//! variable, otherwise it creates one in the current function. Blocks such as
-//! `if` and `for` don't have their own scope.
+//! variable, otherwise it creates one in the current function. `if`, `while`
+//! and `try` blocks don't have their own scope.
+//!
+//! `for` is the one exception: its variables belong to the loop, and each
+//! round of the loop gets its own copy of them, so a function made inside the
+//! loop remembers the item it was made with. They are therefore not collected
+//! here — the resolver and the code generator each open a small scope for
+//! them around the loop body.
 
 use crate::ast::*;
 use crate::checker::module_binding_name;
 
 #[derive(Default)]
 pub struct ScopeNames {
-    /// Always local: variables of `for`, `catch` and `use`, functions, types,
+    /// Always local: variables of `catch` and `use`, functions, types,
     /// components, typed and constant variables, and `state`.
     pub defined: Vec<(String, Option<TypeExpr>)>,
     /// Plain assignments: local unless an enclosing scope has the name.
@@ -18,6 +24,24 @@ pub struct ScopeNames {
     pub hoisted: Vec<String>,
     /// `state` variables.
     pub states: Vec<String>,
+}
+
+/// The variables one `for` loop binds: the item (and the key, when the loop
+/// has two), plus every name in a destructuring pattern. Each round of the
+/// loop gets its own copy of these, in the order returned here.
+pub fn loop_names(first: &Name, second: Option<&Name>, pattern: Option<&Pattern>) -> Vec<String> {
+    let mut names = vec![first.text.clone()];
+    if let Some(s) = second {
+        names.push(s.text.clone());
+    }
+    if let Some(p) = pattern {
+        for n in p.names() {
+            if !names.contains(&n.text) {
+                names.push(n.text.clone());
+            }
+        }
+    }
+    names
 }
 
 /// The names `body` creates, not looking inside nested functions.
@@ -52,16 +76,9 @@ fn collect_stmt(stmt: &Stmt, n: &mut ScopeNames, top: bool) {
             }
         }
         StmtKind::While { body, .. } | StmtKind::Repeat { body, .. } => collect_block(body, n, false),
-        StmtKind::For { first, second, body, pattern, .. } => {
-            n.defined.push((first.text.clone(), None));
-            if let Some(s) = second {
-                n.defined.push((s.text.clone(), None));
-            }
-            if let Some(p) = pattern {
-                n.defined.extend(p.names().into_iter().map(|x| (x.text.clone(), None)));
-            }
-            collect_block(body, n, false);
-        }
+        // The loop's own variables live in the loop, not out here (see the
+        // module comment); only what the body assigns reaches this scope.
+        StmtKind::For { body, .. } => collect_block(body, n, false),
         StmtKind::Func(f) | StmtKind::Component(f) => {
             n.defined.push((f.name.text.clone(), None));
             if top {

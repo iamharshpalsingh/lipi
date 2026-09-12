@@ -897,11 +897,15 @@ impl Interpreter {
     }
 
     fn exec_for(&mut self, first: &Name, second: Option<&Name>, iter: &Expr, body: &[Stmt], pattern: Option<&Pattern>, env: &Rc<Env>) -> Result<(), Flow> {
+        let layout = self.layout_of(crate::resolver::loop_key(body));
+        let mut round = Env::with_layout(Some(env.clone()), EnvKind::Block, &layout);
         if let ExprKind::Range { start, end, step } = &iter.kind {
             let (from, to, step) = self.range_parts(start, end, step.as_deref(), env)?;
             let mut i = from;
             let mut index = 0i64;
             while (step > 0 && i <= to) || (step < 0 && i >= to) {
+                Self::next_round(&mut round, env, &layout);
+                let env = &round;
                 match second {
                     Some(s) => {
                         self.define_name(env, first, Value::Int(index));
@@ -938,6 +942,8 @@ impl Interpreter {
             }
         };
         for (key, value) in pairs {
+            Self::next_round(&mut round, env, &layout);
+            let env = &round;
             match second {
                 Some(s) => {
                     self.define_name(env, first, key);
@@ -956,6 +962,21 @@ impl Interpreter {
             }
         }
         Ok(())
+    }
+
+    /// Start the next round of a `for` loop. The loop's variables live in a
+    /// small environment of their own so that a function made in the body
+    /// keeps the item it was made with. Nothing outside is holding the last
+    /// round's environment in the usual case, and then it is simply emptied
+    /// and used again; a fresh one is made only when something kept it.
+    fn next_round(round: &mut Rc<Env>, parent: &Rc<Env>, layout: &Names) {
+        if Rc::strong_count(round) == 1 {
+            let mut slots = round.slots.borrow_mut();
+            slots.clear();
+            slots.resize_with(layout.borrow().len(), Slot::empty);
+            return;
+        }
+        *round = Env::with_layout(Some(parent.clone()), EnvKind::Block, layout);
     }
 
     fn range_parts(&mut self, start: &Expr, end: &Expr, step: Option<&Expr>, env: &Rc<Env>) -> Result<(i64, i64, i64), Flow> {

@@ -307,6 +307,8 @@ pub enum EnvKind {
     Builtins,
     Module,
     Function,
+    /// One round of a `for` loop: it holds only the loop's own variables.
+    Block,
 }
 
 pub struct Slot {
@@ -351,8 +353,9 @@ pub type VarMap = HashMap<String, Slot, std::hash::BuildHasherDefault<FnvHasher>
 /// of one function share a single list, made when the program is resolved.
 pub type Names = Rc<RefCell<Vec<Rc<str>>>>;
 
-/// Variables of one function call (or module), in numbered slots. Blocks
-/// such as `if` and `for` don't create their own scope.
+/// Variables of one function call (or module), in numbered slots. `if`,
+/// `while` and `try` blocks don't create their own scope; one round of a
+/// `for` loop does, holding just that round's loop variables.
 pub struct Env {
     pub slots: RefCell<Vec<Slot>>,
     pub names: Names,

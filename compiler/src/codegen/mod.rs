@@ -786,8 +786,36 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
+    /// Make the loop's own variables visible while its body is generated, and
+    /// give the names back to the scope afterwards: they belong to the loop.
+    fn open_loop_scope(&mut self, names: &[String]) -> Vec<(String, bool, bool)> {
+        let scope = self.scope();
+        names
+            .iter()
+            .map(|n| {
+                let had = (scope.locals.contains(n), scope.no_check.contains(n));
+                scope.locals.insert(n.clone());
+                scope.no_check.insert(n.clone());
+                (n.clone(), had.0, had.1)
+            })
+            .collect()
+    }
+
+    fn close_loop_scope(&mut self, saved: Vec<(String, bool, bool)>) {
+        let scope = self.scope();
+        for (name, was_local, was_no_check) in saved {
+            if !was_local {
+                scope.locals.remove(&name);
+            }
+            if !was_no_check {
+                scope.no_check.remove(&name);
+            }
+        }
+    }
+
     fn for_loop(&mut self, first: &Name, second: Option<&Name>, iter: &Expr, body: &[Stmt], pattern: Option<&Pattern>, out: &mut String) -> R<()> {
         let (k, v) = (self.fresh("$k"), self.fresh("$v"));
+        let loop_names = crate::scope::loop_names(first, second, pattern);
         self.line(out, "{");
         self.st.ind += 1;
         if let ExprKind::Range { start, end, step } = &iter.kind {
@@ -807,10 +835,10 @@ impl<'a> Gen<'a> {
             self.st.ind += 1;
             match second {
                 Some(s) => {
-                    self.line(out, &format!("{} = {k};", var(&first.text)));
-                    self.line(out, &format!("{} = {v};", var(&s.text)));
+                    self.line(out, &format!("let {} = {k};", var(&first.text)));
+                    self.line(out, &format!("let {} = {v};", var(&s.text)));
                 }
-                None => self.line(out, &format!("{} = {v};", var(&first.text))),
+                None => self.line(out, &format!("let {} = {v};", var(&first.text))),
             }
         } else {
             let c = self.expr(iter)?;
@@ -821,16 +849,25 @@ impl<'a> Gen<'a> {
             self.st.ind += 1;
             match second {
                 Some(s) => {
-                    self.line(out, &format!("{} = {k};", var(&first.text)));
-                    self.line(out, &format!("{} = {v};", var(&s.text)));
+                    self.line(out, &format!("let {} = {k};", var(&first.text)));
+                    self.line(out, &format!("let {} = {v};", var(&s.text)));
                 }
-                None => self.line(out, &format!("{} = {p}.keyed ? {k} : {v};", var(&first.text))),
+                None => self.line(out, &format!("let {} = {p}.keyed ? {k} : {v};", var(&first.text))),
             }
         }
+        // Declared with `let` inside the loop, so each round binds them anew and
+        // a function made in the body keeps the item it was made with.
+        let bound: Vec<String> = loop_names.iter().skip(if second.is_some() { 2 } else { 1 }).map(|n| var(n)).collect();
+        if !bound.is_empty() {
+            self.line(out, &format!("let {};", bound.join(", ")));
+        }
+        let saved = self.open_loop_scope(&loop_names);
         if let Some(pat) = pattern {
             self.destructure(pat, &var(&first.text), iter.span, out)?;
         }
-        self.block(body, out)?;
+        let result = self.block(body, out);
+        self.close_loop_scope(saved);
+        result?;
         self.st.ind -= 1;
         self.line(out, "}");
         self.st.ind -= 1;

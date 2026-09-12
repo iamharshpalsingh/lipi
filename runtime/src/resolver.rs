@@ -14,6 +14,12 @@ use lipi_compiler::scope;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// How a `for` loop's scope is keyed in the layout table: by the address of
+/// its body, which the syntax tree keeps alive for as long as the program runs.
+pub fn loop_key(body: &[Stmt]) -> usize {
+    body.as_ptr() as usize
+}
+
 struct Scope {
     names: Names,
     index: HashMap<Rc<str>, u32>,
@@ -165,7 +171,16 @@ impl<'a> Resolver<'a> {
                 self.block(body);
             }
             StmtKind::For { first, second, iter, body, pattern } => {
+                // What is looped over is read outside the loop; the loop's own
+                // variables get a scope of their own, so each round can hand a
+                // function made in the body its own copy of them.
                 self.expr(iter);
+                let mut s = Scope::new(Names::default());
+                for n in scope::loop_names(first, second.as_ref(), pattern.as_ref()) {
+                    s.add(&n);
+                }
+                let names = s.names.clone();
+                self.scopes.push(s);
                 self.name(first);
                 if let Some(s) = second {
                     self.name(s);
@@ -174,6 +189,8 @@ impl<'a> Resolver<'a> {
                     p.names().into_iter().for_each(|n| self.name(n));
                 }
                 self.block(body);
+                self.scopes.pop();
+                self.layouts.insert(loop_key(body), names);
             }
             StmtKind::Func(f) | StmtKind::Component(f) => {
                 self.name(&f.name);

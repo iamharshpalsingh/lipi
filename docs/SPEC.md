@@ -121,11 +121,28 @@ count += 1                    # also -=, *=, /=
 ```
 
 **Scope:** variables belong to the function (or file) that creates them.
-Blocks (`if`, `for`, …) don't create a new scope. Assigning to a name updates
-the nearest existing variable in an enclosing function or file. Otherwise it
-creates a local variable in the current function; it never creates a hidden
-global. Loop variables, parameters and `catch` names are local. Closures
-capture variables by reference.
+Blocks (`if`, `while`, `try`, …) don't create a new scope. Assigning to a name
+updates the nearest existing variable in an enclosing function or file.
+Otherwise it creates a local variable in the current function; it never creates
+a hidden global. Parameters and `catch` names are local. Closures capture
+variables by reference.
+
+`for` is the exception (1.3): its variables belong to the loop and each round
+of the loop binds them afresh, so a function made inside the body keeps the
+item it was made with. They aren't visible after the loop — keep what you need
+in a variable defined before it:
+
+```lipi
+adders = []
+for n in 1 to 3
+    adders.push(x => x + n)     # 1, 2, 3 — not 3, 3, 3
+show adders.map(f => f(10))     # [11, 12, 13]
+
+last = 0
+for i in 1 to 3
+    last = i                    # `last` belongs to the function, so it lives on
+show last                       # 3; `show i` here is LIP1002
+```
 
 **Evaluation order** is left to right: the receiver, then the arguments in
 order, then the call.
@@ -140,7 +157,7 @@ for {name, age} in people              # in loops too
 ```
 
 The variables follow the normal scope rule (in a `for`, they belong to the
-loop's function like the loop variable). A missing field is an error
+loop and are bound afresh each round, like the loop variable). A missing field is an error
 (LIP5004, with a "did you mean"); an Array with fewer items than the pattern
 names is LIP5001, and extra items are ignored. A `{ }` pattern needs an
 Object (a module works too: `{floor, max} = math`), a `[ ]` pattern an Array
@@ -203,6 +220,10 @@ match status
     else
         show "Unknown"
 ```
+
+A `for` loop's variables belong to the loop, and each round binds them afresh
+(see §5), so a function or a UI event block written inside the body acts on
+that round's item.
 
 `match` compares with `==` and runs the first case that matches.
 
@@ -892,6 +913,7 @@ IDENT          = ( LETTER | "_" ) { LETTER | DIGIT | "_" } ;   (* ASCII *)
 | Object vs map | One Object type with String keys; `obj.x` is strict, `obj["x"]` is lenient |
 | Module cycles | Error LIP3002 |
 | Scope resolution | Decided before the program runs: an assignment updates the variable of that name in the nearest enclosing function or file that assigns it, else creates a local. `lipi run` and `lipi build` share this rule (`lipi_compiler::scope`) |
+| `for` variables | Scoped to the loop and bound afresh each round (1.3), so a function made in the body keeps its own item. Python leaks the last value and repeats one binding; JavaScript's `let` and Rust behave as LiPi does. Using the variable after the loop is LIP1002, with a hint saying where it went |
 | Match syntax | Patterns directly (no `when`), `else`, `_`, guards with `if` |
 | Extra keywords | `show`, `repeat`, `break`, `continue` (from the plan's examples and loop needs) |
 | `type` blocks | A simple object model: fields and methods, and (1.2) single inheritance with `extends` and `super` |

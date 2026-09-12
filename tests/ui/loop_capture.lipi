@@ -1,0 +1,15 @@
+# A button's block written straight inside a `for` acts on that row's item.
+# Each round of the loop binds `item` afresh, so the block a round creates
+# remembers the item it was made with instead of the last one in the list.
+state items = ["chai", "lassi", "coffee"]
+state picked = "nothing"
+state counts = [0, 0, 0]
+
+page "/"
+    heading "Picked: {picked}", level: 1
+    for i, item in items
+        row
+            text "{item} — {counts[i]}"
+            button "pick {item}"
+                picked = item
+                counts[i] += 1

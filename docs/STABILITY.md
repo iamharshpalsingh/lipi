@@ -31,7 +31,17 @@ build on LiPi without worrying that an upgrade will break your code.
 - **Speed and memory use**, and the text shown for values that have no fixed
   form, such as `<function add>` or `<task running>`.
 - **Security fixes**: a program that relies on a security hole may stop
-  working. This is the only exception, and release notes will say so.
+  working, and release notes will say so.
+- **Defect fixes**: where both engines agreed with each other but contradicted
+  this spec, the spec wins and the behaviour is corrected. Release notes name
+  the change, show the code shape it affects, and the compiler explains it
+  where it can. This has happened once:
+
+  | Release | Was | Is |
+  |---|---|---|
+  | 1.3 | A `for` loop kept one binding for its variables, so a function made in the body saw the last item, and the variable stayed readable after the loop | Each round binds them afresh (SPEC §5), and they aren't visible after the loop — using one there is LIP1002 with a hint |
+
+  These two are the only exceptions.
 
 ## Keywords and reserved words
 

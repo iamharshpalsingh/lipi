@@ -259,6 +259,9 @@ pub struct Checker {
     /// For every name, the types of all values assigned to it anywhere in the program.
     global_types: HashMap<String, Vec<Option<Ty>>>,
     def_counts: HashMap<String, usize>,
+    /// Names bound by a `for` loop already checked, for a clearer message when
+    /// one of them is used after its loop.
+    loop_vars: HashSet<String>,
     type_names: HashSet<String>,
     loop_depth: usize,
     fn_depth: usize,
@@ -273,6 +276,7 @@ pub fn check(program: &Program, builtins: &[&str]) -> Vec<Diagnostic> {
         builtins: builtins.iter().map(|s| s.to_string()).collect(),
         global_types: HashMap::new(),
         def_counts: HashMap::new(),
+        loop_vars: HashSet::new(),
         type_names: HashSet::new(),
         loop_depth: 0,
         fn_depth: 0,
@@ -494,6 +498,18 @@ impl Checker {
         self.scopes.iter().rev().find_map(|s| s.vars.get(name))
     }
 
+    /// "Undefined variable", with a better hint when the name is a `for`
+    /// loop's variable being used after the loop has ended.
+    fn name_error(&self, name: &str, span: Span) -> Diagnostic {
+        let d = unknown_name(name, span, self.visible_names());
+        if self.loop_vars.contains(name) {
+            return d.with_hint(format!(
+                "\"{name}\" belongs to the `for` loop above and only exists inside it. Keep what you need in a variable defined before the loop."
+            ));
+        }
+        d
+    }
+
     fn visible_names(&self) -> Vec<&str> {
         let mut v: Vec<&str> = self.scopes.iter().flat_map(|s| s.vars.keys().map(|k| k.as_str())).collect();
         v.extend(self.builtins.iter().map(|s| s.as_str()));
@@ -585,14 +601,23 @@ impl Checker {
                 }
                 self.loop_body(body);
             }
-            StmtKind::For { iter, body, .. } => {
+            StmtKind::For { first, second, iter, body, pattern } => {
                 let t = self.expr(iter);
                 if t.numeric() || matches!(t, Ty::Bool | Ty::Function | Ty::Null) {
                     self.err(Diagnostic::error(format!("cannot loop over {}", with_article(t.name())), iter.span)
                         .with_code("LIP2001")
                         .with_hint("Loop over an Array, a String, an Object or a range like 1 to 10."));
                 }
+                // The loop's variables are visible only while its body is checked.
+                let names = crate::scope::loop_names(first, second.as_ref(), pattern.as_ref());
+                let vars = names
+                    .iter()
+                    .map(|n| (n.clone(), Var { ty: self.var_type(n), declared: None, constant: false, sig: None }))
+                    .collect();
+                self.scopes.push(Scope { vars });
                 self.loop_body(body);
+                self.scopes.pop();
+                self.loop_vars.extend(names);
             }
             StmtKind::Func(f) | StmtKind::Component(f) => self.function(f, None),
             StmtKind::State { name, ty, value } => self.assign(&Target::Name(name.clone()), None, ty.as_ref(), value, false, stmt.span),
@@ -836,8 +861,7 @@ impl Checker {
                     return v.ty;
                 }
                 if !self.builtins.contains(name) {
-                    let names = self.visible_names();
-                    let d = unknown_name(name, e.span, names);
+                    let d = self.name_error(name, e.span);
                     self.err(d);
                 }
                 Ty::Any
@@ -1192,16 +1216,9 @@ fn collect_stmt(stmt: &Stmt, out: &mut Vec<Collected>, depth: usize) {
             let sig = if t.parent.is_some() { None } else { Some(sig) };
             out.push(Collected { name: t.name.text.clone(), ty: None, constant: false, sig, def_span: top(t.name.span) });
         }
-        StmtKind::For { first, second, body, pattern, .. } => {
-            out.push(plain(&first.text));
-            if let Some(s) = second {
-                out.push(plain(&s.text));
-            }
-            for n in pattern.iter().flat_map(|p| p.names()) {
-                out.push(plain(&n.text));
-            }
-            collect_names(body, out, depth + 1);
-        }
+        // A `for` loop's own variables belong to the loop, not to the function
+        // around it, so they are added when the loop body is checked.
+        StmtKind::For { body, .. } => collect_names(body, out, depth + 1),
         StmtKind::If { branches, otherwise } => {
             for (_, b) in branches {
                 collect_names(b, out, depth + 1);
