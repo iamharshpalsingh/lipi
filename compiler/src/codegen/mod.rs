@@ -47,7 +47,7 @@ const STD_MODULES: &[&str] = &["math", "json", "fs", "env", "http", "time", "pro
 const JS_GLOBALS: &[&str] = &["toNumber", "toInteger", "toDecimal", "toString", "typeOf", "assert", "assertEqual", "sleep", "all", "timeout"];
 /// LiPi UI: pages and elements (web builds only).
 pub const UI_ELEMENTS: &[&str] = &[
-    "page", "card", "row", "column", "section", "heading", "text", "button", "link", "image", "field", "checkbox", "element", "navigate",
+    "page", "card", "row", "column", "section", "heading", "text", "button", "link", "image", "field", "checkbox", "select", "upload", "element", "navigate",
 ];
 
 fn js_module_available(name: &str, target: Target) -> bool {

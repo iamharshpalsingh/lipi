@@ -623,11 +623,32 @@ page "/orders/:id" with url         # url.path, url.params.id, url.query
   | `heading value, level: 2` | heading, levels 1–6 |
   | `text value, …` | paragraph |
   | `button label, disabled: false` + block | the block runs on click |
-  | `field value, placeholder: "…", type: "text"` `with value` + block | text box; the block gets the new text |
+  | `field value, placeholder: "…", type: "text"` `with value` + block | text box; the block gets the new text. `lines: 4` makes it that many lines tall |
   | `checkbox checked, label` `with checked` + block | the block gets true or false |
+  | `select value, options: […], placeholder: "…"` `with chosen` + block | a dropdown (1.3); an option is a value or `{value, label}` |
+  | `upload label, accept: "image/*", multiple: false` `with files` + block | choose files (1.3); see below |
   | `link label, to: "/page"` | app page, or an `https:`/`http:`/`mailto:`/`tel:` address (opens in a new tab) |
   | `image source, alt: "…"` | image |
   | `element "tag", …` + block | any other element except script/style/embeds (LIP6003) |
+
+- **`action:`** (1.3) makes any element clickable: `action:` takes a function,
+  and anything that isn't already a control also gets `role="button"` and
+  `tabindex="0"`, so Enter and Space work for someone not using a mouse. It's
+  how a whole card becomes one tappable tile:
+
+  ```lipi
+  for brand in brands
+      card class: "tile", action: () => pick(brand)
+          text brand.name
+          text brand.note
+  ```
+
+  A `button`'s own block is still the shorter way to say the same thing for a
+  plain button.
+- **`upload`** gives its block an Array of files, already read: each one is an
+  Object with `name`, `type`, `size`, `dataUrl` (which an `image` can show) and
+  `text` (the contents for text, JSON, XML and CSV files, otherwise `null`).
+  The block runs once the files have been read.
 
   Every element also takes `class:`, `id:`, `style:` and `title:`, and
   four style options for things an inline style can't do:

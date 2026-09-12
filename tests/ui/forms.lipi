@@ -1,0 +1,34 @@
+# The form elements: a dropdown, a field several lines tall, and `action:`,
+# which turns any element into something you can click and tab to.
+state city = "pune"
+state note = ""
+state picked = "nothing"
+state photos = []
+
+const cities = [
+    {value: "delhi", label: "Delhi"},
+    {value: "pune", label: "Pune"},
+    {value: "kochi", label: "Kochi"}
+]
+
+page "/"
+    heading "City: {city}", level: 1
+    select city, options: cities, placeholder: "Pick a city" with chosen
+        city = chosen
+
+    field note, lines: 4, placeholder: "Anything else?" with typed
+        note = typed
+    text "Note: {note}"
+
+    upload "Add a photo", accept: "image/*", multiple: true with files
+        for f in files
+            photos.push("{f.name} ({f.size}) {f.text}")
+    text "Photos: {photos.join(", ")}"
+
+    text "Picked: {picked}"
+    for name in ["chai", "lassi"]
+        card class: "tile", action: () => choose(name)
+            text "tap {name}"
+
+choose(name)
+    picked = name

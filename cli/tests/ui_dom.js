@@ -3,6 +3,9 @@
 //
 //   node ui_dom.js dist/app.js "click:Add to cart" "type:Search=chai" "go:/checkout"
 //
+// Steps: click:<text>, press:<text> (the keyboard), type:<placeholder>=<text>,
+// pick:<option value>, check:<label>, go:<path>.
+//
 // After each step it prints the HTML inside #app.
 "use strict";
 
@@ -41,7 +44,7 @@ class FakeElement extends FakeNode {
   get id() { return this.getAttribute("id") || ""; }
   set id(v) { this.setAttribute("id", v); }
   addEventListener(type, f) { (this.listeners[type] = this.listeners[type] || []).push(f); }
-  dispatch(type) { for (const f of this.listeners[type] || []) f({ type, preventDefault() {} }); }
+  dispatch(type, extra) { for (const f of this.listeners[type] || []) f(Object.assign({ type, preventDefault() {} }, extra)); }
   get textContent() { return this.childNodes.map((c) => c.textContent).join(""); }
   set textContent(v) { this.childNodes = []; this.appendChild(new FakeText(v)); }
 }
@@ -70,12 +73,20 @@ globalThis.location = {
   set hash(v) { hash = v.startsWith("#") ? v : "#" + v; for (const f of windowListeners.hashchange || []) f(); },
 };
 
+// Just enough of the File APIs for `upload` blocks.
+globalThis.FileReader = class {
+  finish(value) { this.result = value; setTimeout(() => this.onload && this.onload(), 0); }
+  readAsDataURL(f) { this.finish(`data:${f.type};base64,${Buffer.from(f.data).toString("base64")}`); }
+  readAsText(f) { this.finish(f.data); }
+};
+
 function html(n) {
   if (n instanceof FakeText) return n.nodeValue;
   const tag = n.tagName.toLowerCase();
   const attrs = Array.from(n.attributes).sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]) => (v === "" ? ` ${k}` : ` ${k}="${v}"`)).join("");
   let props = "";
   if (tag === "input") props = n.getAttribute("type") === "checkbox" ? (n.checked ? " [checked]" : "") : ` [value=${JSON.stringify(n.value)}]`;
+  if (tag === "select" || tag === "textarea") props = ` [value=${JSON.stringify(n.value)}]`;
   return `<${tag}${attrs}${props}>${n.childNodes.map(html).join("")}</${tag}>`;
 }
 
@@ -89,11 +100,25 @@ async function main() {
   for (const step of steps) {
     const at = step.indexOf(":");
     const [action, arg] = [step.slice(0, at), step.slice(at + 1)];
-    if (action === "click") {
-      const el = all(app).find((e) => (e.tagName === "BUTTON" || e.tagName === "A") && e.textContent === arg);
+    if (action === "click" || action === "press") {
+      const clickable = (e) => e.tagName === "BUTTON" || e.tagName === "A" || e.getAttribute("role") === "button";
+      const el = all(app).find((e) => clickable(e) && e.textContent === arg);
       if (!el) throw new Error(`nothing to click called "${arg}"`);
-      if (el.tagName === "A") location.hash = el.getAttribute("href");
+      // "press" reaches the same thing with the keyboard instead of the mouse.
+      if (action === "press") el.dispatch("keydown", { key: "Enter" });
+      else if (el.tagName === "A") location.hash = el.getAttribute("href");
       else el.dispatch("click");
+    } else if (action === "pick") {
+      const el = all(app).find((e) => e.tagName === "SELECT" && e.childNodes.some((o) => o.getAttribute("value") === arg));
+      if (!el) throw new Error(`no dropdown with the choice "${arg}"`);
+      el.value = arg;
+      el.dispatch("change");
+    } else if (action === "upload") {
+      const [name, data] = [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)];
+      const el = all(app).find((e) => e.getAttribute("type") === "file");
+      if (!el) throw new Error("no upload on the page");
+      el.files = [{ name, type: "text/plain", size: data.length, data }];
+      el.dispatch("change");
     } else if (action === "type") {
       const [placeholder, value] = arg.split("=");
       const el = all(app).find((e) => e.getAttribute("placeholder") === placeholder);

@@ -85,6 +85,33 @@ fn hover_and_screen_size_styles_become_css_rules() {
 }
 
 #[test]
+fn dropdowns_long_fields_uploads_and_action_all_work() {
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("node isn't installed; skipping the form test");
+        return;
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let out_dir = std::env::temp_dir().join(format!("lipi-forms-test-{}", std::process::id()));
+    let build = Command::new(env!("CARGO_BIN_EXE_lipi")).args(["build", "tests/ui/forms.lipi", "--out", &out_dir.to_string_lossy()]).current_dir(root).output().unwrap();
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    let steps = ["pick:kochi", "type:Anything else?=theek hai", "upload:notes.txt=chai ready", "click:tap chai", "press:tap lassi"];
+    let run = Command::new("node").arg(root.join("cli").join("tests").join("ui_dom.js")).arg(out_dir.join("app.js")).args(steps).output().unwrap();
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+    assert!(run.status.success(), "{out}\n{}", String::from_utf8_lossy(&run.stderr));
+    let frames: Vec<&str> = out.split("--- ").skip(1).collect();
+    // A dropdown reports the chosen value; a field with `lines:` is a textarea.
+    assert!(frames[1].contains("City: kochi") && frames[1].contains("[value=\"kochi\"]"), "{}", frames[1]);
+    assert!(frames[2].contains("<textarea") && frames[2].contains("Note: theek hai"), "{}", frames[2]);
+    // An upload block gets each file's name, size and (for text) its contents.
+    assert!(frames[3].contains("Photos: notes.txt (10) chai ready"), "{}", frames[3]);
+    // `action:` works with the mouse and with the keyboard, and is reachable by tab.
+    assert!(frames[4].contains("Picked: chai") && frames[4].contains("role=\"button\" tabindex=\"0\""), "{}", frames[4]);
+    assert!(frames[5].contains("Picked: lassi"), "{}", frames[5]);
+    assert!(!out.contains("error on the page"), "{out}");
+}
+
+#[test]
 fn a_click_block_inside_a_for_acts_on_that_rows_item() {
     if Command::new("node").arg("--version").output().is_err() {
         eprintln!("node isn't installed; skipping the loop-capture test");

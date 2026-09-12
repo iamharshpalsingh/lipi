@@ -52,8 +52,10 @@ page "/"
 | `button "..."` + block | button (block click pe chalta hai) |
 | `link "...", to: "/page"` | doosre page ya website ka link |
 | `image "file.png"` | photo |
-| `field value` | text box |
+| `field value` | text box (`lines: 4` se lamba box) |
 | `checkbox checked, "label"` | tick box |
+| `select value, options: [...]` | dropdown |
+| `upload "label"` | file / photo chunna |
 
 ---
 
@@ -91,6 +93,78 @@ page "/"
 ```
 
 `with value` me user ka likha hua text aata hai. Har letter pe page update hota hai.
+
+Lamba box chahiye to `lines:` do:
+
+```lipi fragment
+field pata, lines: 4, placeholder: "Poora pata" with value
+    pata = value
+```
+
+---
+
+## Dropdown (select)
+
+```lipi
+state shehar = "pune"
+
+page "/"
+    select shehar, options: ["delhi", "pune", "kochi"] with chosen
+        shehar = chosen
+    text "Shehar: {shehar}"
+```
+
+Label alag rakhna ho to option ko Object banao:
+
+```lipi fragment
+select shehar, options: [{value: "pune", label: "Pune"}] with chosen
+    shehar = chosen
+```
+
+---
+
+## File ya photo lena (upload)
+
+```lipi
+state photos = []
+
+page "/"
+    upload "Photo chuno", accept: "image/*", multiple: true with files
+        for f in files
+            photos.push(f)
+    for p in photos
+        card
+            image p.dataUrl, alt: p.name
+            text "{p.name} — {p.size} bytes"
+```
+
+Har file ek Object hai: `name`, `type`, `size`, `dataUrl` (seedha `image` me
+daal sakte ho) aur `text` (text/JSON/CSV file ka content, warna `null`). Block
+tab chalta hai jab file padh li jaati hai.
+
+---
+
+## Poori card ko clickable banana (action)
+
+`button` sirf text leta hai. Jab pura card ya row tap karna ho, `action:` do:
+
+```lipi
+state chuna = "kuch nahi"
+const brands = [{id: "redmi", name: "Redmi"}, {id: "vivo", name: "Vivo"}]
+
+page "/"
+    text "Chuna: {chuna}"
+    for b in brands
+        card action: () => pick(b.id)
+            heading b.name, level: 3
+            text "tap karo"
+
+pick(id)
+    chuna = id
+```
+
+LiPi khud `role="button"` aur `tabindex="0"` laga deta hai, isliye keyboard se
+Tab + Enter bhi chalta hai — jo log mouse use nahi karte unke liye zaroori hai.
 
 ---
 

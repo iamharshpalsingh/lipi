@@ -1814,7 +1814,16 @@ function uiRuleClass(kind, css, s) {
   return cls;
 }
 const BLOCKED_TAGS = new Set(["script", "style", "iframe", "object", "embed", "link", "meta", "base", "frame", "frameset", "template"]);
-const UI_OPTIONS = { heading: ["level"], button: ["disabled"], link: ["to"], image: ["alt"], field: ["placeholder", "type", "disabled"], checkbox: ["disabled"] };
+const UI_OPTIONS = {
+  heading: ["level"],
+  button: ["disabled"],
+  link: ["to"],
+  image: ["alt"],
+  field: ["placeholder", "type", "lines", "disabled"],
+  checkbox: ["disabled"],
+  select: ["options", "placeholder", "disabled"],
+  upload: ["accept", "multiple", "disabled"],
+};
 const UI_CSS = `
 #app { max-width: 60rem; margin: 0 auto; }
 .lipi-card { background: #fff; border: 1px solid #E8E1D6; border-radius: 12px; padding: 1rem 1.25rem; margin: .75rem 0; box-shadow: 0 1px 2px rgba(23,18,14,.06); }
@@ -1831,6 +1840,12 @@ const UI_CSS = `
 .lipi-link { color: #B83A22; }
 .lipi-image { max-width: 100%; border-radius: 8px; }
 .lipi-checkbox { display: inline-flex; gap: .5rem; align-items: center; cursor: pointer; }
+.lipi-select { font: inherit; padding: .45rem .65rem; border: 1px solid #CFC6B8; border-radius: 8px; background: #fff; min-width: 14rem; }
+.lipi-select:focus-visible { outline: 2px solid #17120E; outline-offset: 2px; }
+.lipi-upload { display: inline-flex; gap: .5rem; align-items: center; cursor: pointer; }
+.lipi-action { cursor: pointer; }
+.lipi-action:focus-visible { outline: 2px solid #17120E; outline-offset: 2px; }
+textarea.lipi-field { min-height: 4.5rem; resize: vertical; }
 `;
 
 class Instance {
@@ -1900,9 +1915,10 @@ function common(kind, named, s) {
   for (const [k, v] of Object.entries(named)) {
     if (k === "class") a.class += " " + display(v);
     else if (k === "id" || k === "style" || k === "title") a[k] = display(v);
+    else if (k === "action") continue; // handled by uiAction
     else if (UI_STATE_STYLES.has(k)) a.class += " " + uiRuleClass(k, display(v), s);
     else if (!own.includes(k)) {
-      const all = ["class", "id", "style", "title", "hover", "focus", "mobile", "desktop", ...own];
+      const all = ["class", "id", "style", "title", "action", "hover", "focus", "mobile", "desktop", ...own];
       $fail("LIP5008", `${kind} has no option "${k}"`, s, didYouMean(k, all) || `Its options are: ${all.join(", ")}`);
     }
   }
@@ -1910,6 +1926,57 @@ function common(kind, named, s) {
 }
 
 function optBool(named, key, s) { return named && named[key] !== undefined ? $bool(named[key], s) : false; }
+
+/// `action:` makes any element clickable. Anything that isn't already a
+/// control also becomes reachable with the keyboard, so a card or a row used
+/// as a tile behaves like a button for someone who doesn't use a mouse.
+function uiAction(named, node, s) {
+  const f = named && named.action;
+  if (f === undefined || f === null) return node;
+  if (typeof f !== "function") $fail("LIP5008", `action must be a function, but this is ${withArticle(typeName(f))}`, s, 'For example: action: () => choose(item)');
+  if (node.tag !== "button" && node.tag !== "a" && node.tag !== "input" && node.tag !== "select") {
+    node.a.role = "button";
+    node.a.tabindex = "0";
+    node.a.class += " lipi-action";
+  }
+  node.on = Object.assign({}, node.on, { click: f, keydown: f });
+  return node;
+}
+
+/// One `<option>` of a `select`. An option is either a plain value or an
+/// Object with `value` and `label`.
+function uiOption(o, s) {
+  if (o instanceof LObj) {
+    const v = o.f.get("value");
+    if (v === undefined) $fail("LIP5008", 'an option Object needs a "value" field', s, 'For example: {value: "np", label: "Nepal"}');
+    const label = o.f.get("label");
+    return { value: display(v), label: display(label === undefined || label === null ? v : label) };
+  }
+  return { value: display(o), label: display(o) };
+}
+
+/// What a `upload` block receives for one chosen file. Text-ish files also
+/// arrive read, so a CSV or a JSON file can be used without any more work.
+const UPLOAD_TEXT = /^(text\/|application\/(json|xml|csv|javascript)|$)/i;
+function uiReadFile(file) {
+  const asText = UPLOAD_TEXT.test(file.type || "");
+  const read = (how) =>
+    new Promise((done) => {
+      const r = new FileReader();
+      r.onerror = () => done(null);
+      r.onload = () => done(typeof r.result === "string" ? r.result : null);
+      how(r, file);
+    });
+  return Promise.all([read((r, f) => r.readAsDataURL(f)), asText ? read((r, f) => r.readAsText(f)) : Promise.resolve(null)]).then(([dataUrl, text]) =>
+    $obj([
+      ["name", file.name],
+      ["type", file.type || ""],
+      ["size", file.size],
+      ["dataUrl", dataUrl],
+      ["text", text],
+    ]),
+  );
+}
 
 function uiSafeUrl(url, s, what) {
   if (/^\s*(javascript|data|vbscript):/i.test(url)) $fail("LIP6003", `${what} can't use "${url.split(":")[0]}:" addresses`, s, "They could run code the page didn't write.");
@@ -1920,7 +1987,7 @@ function installUI() {
   const container = (kind, tag) => def(kind, (pos, named, s) => {
     uiCheck(kind, s);
     const [values, block] = splitBlock(pos);
-    emit(vnode(tag, common(kind, named, s), texts(values).concat(drawInside(block, s))));
+    emit(uiAction(named, vnode(tag, common(kind, named, s), texts(values).concat(drawInside(block, s))), s));
     return null;
   });
   container("card", "div");
@@ -1932,13 +1999,13 @@ function installUI() {
     const level = named && named.level !== undefined ? named.level : 2;
     if (!isInt(level) || level < 1 || level > 6) $fail("LIP5008", "a heading's level must be an Integer from 1 to 6", s);
     const [values, block] = splitBlock(pos);
-    emit(vnode("h" + level, common("heading", named, s), texts(values).concat(drawInside(block, s))));
+    emit(uiAction(named, vnode("h" + level, common("heading", named, s), texts(values).concat(drawInside(block, s))), s));
     return null;
   });
   def("text", (pos, named, s) => {
     uiCheck("text", s);
     const [values, block] = splitBlock(pos);
-    emit(vnode("p", common("text", named, s), texts(values).concat(drawInside(block, s))));
+    emit(uiAction(named, vnode("p", common("text", named, s), texts(values).concat(drawInside(block, s))), s));
     return null;
   });
   def("button", (pos, named, s) => {
@@ -1969,18 +2036,50 @@ function installUI() {
     const a = common("image", named, s);
     a.src = src;
     a.alt = named && named.alt !== undefined ? display(named.alt) : "";
-    emit(vnode("img", a));
+    emit(uiAction(named, vnode("img", a), s));
     return null;
   });
   def("field", (pos, named, s) => {
     uiCheck("field", s);
     const [values, block] = splitBlock(pos);
     const a = common("field", named, s);
-    a.type = named && named.type !== undefined ? display(named.type) : "text";
+    // `lines:` makes it a box several lines tall instead of one line.
+    const lines = named && named.lines !== undefined ? named.lines : null;
+    if (lines !== null && (!isInt(lines) || Number(lines) < 2)) $fail("LIP5008", "a field's lines must be an Integer of 2 or more", s, "For example: field note, lines: 4");
+    if (lines === null) a.type = named && named.type !== undefined ? display(named.type) : "text";
+    else a.rows = Number(lines);
     if (named && named.placeholder !== undefined) a.placeholder = display(named.placeholder);
     a.disabled = optBool(named, "disabled", s);
     const v = values[0];
-    emit(vnode("input", a, [], block ? { input: block } : {}, { value: v === undefined || v === null ? "" : display(v) }));
+    emit(vnode(lines === null ? "input" : "textarea", a, [], block ? { input: block } : {}, { value: v === undefined || v === null ? "" : display(v) }));
+    return null;
+  });
+  def("select", (pos, named, s) => {
+    uiCheck("select", s);
+    const [values, block] = splitBlock(pos);
+    const list = named && named.options;
+    if (!Array.isArray(list)) $fail("LIP5008", "a select needs its choices", s, 'For example: select city, options: ["Delhi", "Pune"]');
+    const a = common("select", named, s);
+    a.disabled = optBool(named, "disabled", s);
+    const chosen = values[0] === undefined || values[0] === null ? "" : display(values[0]);
+    const kids = [];
+    if (named.placeholder !== undefined) kids.push(vnode("option", { value: "", disabled: true }, [{ t: display(named.placeholder) }]));
+    for (const o of list) {
+      const { value, label } = uiOption(o, s);
+      kids.push(vnode("option", { value }, [{ t: label }]));
+    }
+    emit(vnode("select", a, kids, block ? { change: block } : {}, { value: chosen }));
+    return null;
+  });
+  def("upload", (pos, named, s) => {
+    uiCheck("upload", s);
+    const [values, block] = splitBlock(pos);
+    const a = common("upload", named, s);
+    const box = { type: "file", disabled: optBool(named, "disabled", s) };
+    if (named && named.accept !== undefined) box.accept = display(named.accept);
+    if (optBool(named, "multiple", s)) box.multiple = true;
+    const input = vnode("input", box, [], block ? { change: block } : {});
+    emit(vnode("label", a, [input].concat(texts(values.length ? values : ["Choose a file"]))));
     return null;
   });
   def("checkbox", (pos, named, s) => {
@@ -1997,7 +2096,7 @@ function installUI() {
     const tag = values[0];
     if (typeof tag !== "string" || !/^[a-z][a-z0-9-]*$/.test(tag)) $fail("LIP5008", "element needs a tag name", s, 'For example: element "ul"');
     if (BLOCKED_TAGS.has(tag)) $fail("LIP6003", `element can't create <${tag}>`, s, "Scripts, styles and embedded pages could run code the page didn't write.");
-    emit(vnode(tag, common("element", named, s), texts(values.slice(1)).concat(drawInside(block, s))));
+    emit(uiAction(named, vnode(tag, common("element", named, s), texts(values.slice(1)).concat(drawInside(block, s))), s));
     return null;
   });
   def("page", (pos, named, s) => {
@@ -2081,10 +2180,25 @@ function uiRender() {
 }
 
 /// Run an event handler, then redraw (again when an async handler finishes).
-function uiFire(el, type) {
+function uiFire(el, type, ev) {
   const h = el.$h && el.$h[type];
   if (!h) return;
-  const args = type === "input" ? [el.value] : type === "change" ? [el.checked] : [];
+  // An `action:` element is reached with the keyboard as well as the mouse.
+  if (type === "keydown") {
+    if (!ev || (ev.key !== "Enter" && ev.key !== " ")) return;
+    if (ev.preventDefault) ev.preventDefault();
+  }
+  // Chosen files are read before the block runs, so it gets them ready to use.
+  if (type === "change" && el.getAttribute("type") === "file") {
+    const files = Array.from(el.files || []);
+    Promise.all(files.map(uiReadFile)).then((vals) => uiRun(h, [vals]));
+    return;
+  }
+  const args = type === "input" ? [el.value] : type === "change" ? [el.tagName === "SELECT" ? el.value : el.checked] : [];
+  uiRun(h, args);
+}
+
+function uiRun(h, args) {
   let r;
   try {
     r = cb(h, args, null);
@@ -2105,7 +2219,7 @@ function uiListen(el, on) {
   for (const type of Object.keys(on)) {
     if (el.$types.has(type)) continue;
     el.$types.add(type);
-    el.addEventListener(type, () => uiFire(el, type));
+    el.addEventListener(type, (ev) => uiFire(el, type, ev));
   }
 }
 
@@ -2113,10 +2227,11 @@ function uiCreate(v) {
   if (v.t !== undefined) return document.createTextNode(v.t);
   const el = document.createElement(v.tag);
   for (const [k, x] of Object.entries(v.a)) uiSetAttr(el, k, x);
-  for (const [k, x] of Object.entries(v.p)) el[k] = x;
   el.$h = v.on;
   uiListen(el, v.on);
   for (const c of v.k) el.appendChild(uiCreate(c));
+  // After the children: a <select> can only take its value once its options exist.
+  for (const [k, x] of Object.entries(v.p)) el[k] = x;
   return el;
 }
 
@@ -2131,10 +2246,10 @@ function uiPatch(parent, node, o, n) {
   }
   for (const k of Object.keys(o.a)) if (!(k in n.a)) node.removeAttribute(k);
   for (const [k, x] of Object.entries(n.a)) if (o.a[k] !== x) uiSetAttr(node, k, x);
-  for (const [k, x] of Object.entries(n.p)) if (node[k] !== x) node[k] = x;
   node.$h = n.on;
   uiListen(node, n.on);
   patchChildren(node, o.k, n.k);
+  for (const [k, x] of Object.entries(n.p)) if (node[k] !== x) node[k] = x;
 }
 
 function patchChildren(dom, olds, news) {
