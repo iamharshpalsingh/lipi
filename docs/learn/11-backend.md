@@ -196,6 +196,30 @@ false
 
 ---
 
+## Background kaam (time.every)
+
+Har app me kuch kaam aisa hota hai jo kisi request se nahi, **ghadi** se chalta
+hai: purane order chase karna, reminder bhejna, raat ko cleanup. Wo bas server
+ke saath likh do:
+
+```lipi fragment
+server.start 3000
+
+get "/orders"
+    return db.orders.all()
+
+# Har minute: jo order 24 ghante se pending hai, us par dhyan do
+time.every 60000
+    for o in db.orders.where(status: "pending")
+        show "pending: {o.id}"
+```
+
+Timer ka block aur request handler dono ek hi thread pe, ek-ek kar ke chalte
+hain — matlab ek dusre ko aadha-adhura kabhi nahi dekhte. Timer me error aaye
+to wo timer ruk jaata hai, message dikhta hai, server chalta rehta hai.
+
+---
+
 ## Khud karo
 
 1. Ek server banao jisme `/time` address current time de (`time.iso()`).

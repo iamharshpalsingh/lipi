@@ -264,7 +264,11 @@ impl Interpreter {
         let result = self.run_source(&source, file);
         self.loading.clear();
         let (env, _) = result?;
-        self.run_timers()?;
+        // With a web server about to start, `serve` runs the timers between
+        // requests instead; running them here would never reach the server.
+        if self.server.listener.is_none() {
+            self.run_timers()?;
+        }
         Ok(env)
     }
 
@@ -273,38 +277,51 @@ impl Interpreter {
     /// (as in JavaScript), and the program then exits with code 1.
     fn run_timers(&mut self) -> Result<(), RunError> {
         let mut failed = false;
-        loop {
-            self.timers.retain(|t| !t.stopped.get());
-            let Some(i) = (0..self.timers.len()).min_by_key(|&i| (self.timers[i].due, self.timers[i].id)) else { break };
+        while let Some((i, due)) = self.next_timer_due() {
             let now = Instant::now();
-            if self.timers[i].due > now {
-                std::thread::sleep(self.timers[i].due - now);
+            if due > now {
+                std::thread::sleep(due - now);
             }
-            let t = &mut self.timers[i];
-            let (f, span, stopped, file) = (t.f.clone(), t.span, t.stopped.clone(), t.file.clone());
-            match t.every {
-                Some(d) => t.due += d,
-                None => t.stopped.set(true),
-            }
-            let prev = std::mem::replace(&mut self.file, file);
-            let r = self.call_callback(&f, Vec::new(), span);
-            self.file = prev;
-            match r {
-                Ok(_) | Err(Flow::Return(_)) | Err(Flow::Break) | Err(Flow::Continue) => {}
-                Err(Flow::Exit(code)) => return Err(RunError::Exit(code)),
-                Err(Flow::Throw(t)) => {
-                    stopped.set(true);
-                    failed = true;
-                    use std::io::Write;
-                    let _ = std::io::stdout().flush();
-                    eprint!("{}", self.render(&RunError::Runtime(t), self.color));
-                }
+            if !self.fire_timer(i)? {
+                failed = true;
             }
         }
         if failed {
             return Err(RunError::Exit(1));
         }
         Ok(())
+    }
+
+    /// The timer that runs next, and when. Stopped timers are dropped here.
+    pub(crate) fn next_timer_due(&mut self) -> Option<(usize, Instant)> {
+        self.timers.retain(|t| !t.stopped.get());
+        let i = (0..self.timers.len()).min_by_key(|&i| (self.timers[i].due, self.timers[i].id))?;
+        Some((i, self.timers[i].due))
+    }
+
+    /// Run one timer's block. Returns false if it ended in an error, which is
+    /// shown and stops that timer while the others go on.
+    pub(crate) fn fire_timer(&mut self, i: usize) -> Result<bool, RunError> {
+        let t = &mut self.timers[i];
+        let (f, span, stopped, file) = (t.f.clone(), t.span, t.stopped.clone(), t.file.clone());
+        match t.every {
+            Some(d) => t.due += d,
+            None => t.stopped.set(true),
+        }
+        let prev = std::mem::replace(&mut self.file, file);
+        let r = self.call_callback(&f, Vec::new(), span);
+        self.file = prev;
+        match r {
+            Ok(_) | Err(Flow::Return(_)) | Err(Flow::Break) | Err(Flow::Continue) => Ok(true),
+            Err(Flow::Exit(code)) => Err(RunError::Exit(code)),
+            Err(Flow::Throw(t)) => {
+                stopped.set(true);
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+                eprint!("{}", self.render(&RunError::Runtime(t), self.color));
+                Ok(false)
+            }
+        }
     }
 
     /// `time.after(ms, block)` / `time.every(ms, block)`: returns the timer's stop() switch.

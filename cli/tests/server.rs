@@ -76,6 +76,12 @@ fn server_routes_middleware_and_websockets() {
     let (_, _, body) = get(port, "/search?q=hello%20world&page=2");
     assert_eq!(body, r#"{"q":"hello world","page":"2"}"#);
 
+    // A `time.every` block keeps running while the server serves requests.
+    let before: i64 = get(port, "/ticks").2.trim_matches(|c: char| !c.is_ascii_digit()).parse().unwrap_or(-1);
+    std::thread::sleep(Duration::from_millis(200));
+    let after: i64 = get(port, "/ticks").2.trim_matches(|c: char| !c.is_ascii_digit()).parse().unwrap_or(-1);
+    assert!(after > before && before >= 0, "the background job should have counted up: {before} then {after}");
+
     let (_, head, _) = get(port, "/login");
     assert!(head.contains("Set-Cookie: session=abc; Path=/; HttpOnly; SameSite=Lax"), "{head}");
 

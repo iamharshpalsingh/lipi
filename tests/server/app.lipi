@@ -23,6 +23,16 @@ get "/secret"
 get "/search" with request
     return request.query
 
+# A background job, running in the same program as the routes: `/ticks` counts
+# up on its own while the server answers requests.
+state ticks = 0
+
+time.every 20
+    ticks += 1
+
+get "/ticks" with request
+    return {ticks: ticks}
+
 get "/login"
     return server.respond(200, "ok", {"Set-Cookie": server.cookie("session", "abc")})
 

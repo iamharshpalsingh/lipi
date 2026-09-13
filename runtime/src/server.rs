@@ -26,8 +26,8 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
-use std::sync::mpsc::{channel, Sender};
-use std::time::Instant;
+use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
+use std::time::{Duration, Instant};
 
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
@@ -108,7 +108,7 @@ pub struct ServerState {
     ws_routes: Vec<Route>,
     before: Vec<(Value, Span)>,
     statics: Vec<(String, PathBuf)>,
-    listener: Option<(TcpListener, u16, String)>,
+    pub(crate) listener: Option<(TcpListener, u16, String)>,
     sockets: HashMap<u64, Socket>,
     stop: bool,
 }
@@ -422,7 +422,30 @@ impl Interpreter {
                 std::thread::spawn(move || handle_connection(stream, tx, id));
             }
         });
-        while let Ok(event) = rx.recv() {
+        loop {
+            // Between requests, anything `time.after` or `time.every` set up
+            // gets its turn: background jobs, reminders and clean-ups run in
+            // the same program as the routes, one at a time like a handler.
+            let event = match self.next_timer_due() {
+                Some((i, due)) => match due.checked_duration_since(Instant::now()) {
+                    None | Some(Duration::ZERO) => {
+                        self.fire_timer(i)?;
+                        if self.server.stop {
+                            break;
+                        }
+                        continue;
+                    }
+                    Some(wait) => match rx.recv_timeout(wait) {
+                        Ok(e) => e,
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    },
+                },
+                None => match rx.recv() {
+                    Ok(e) => e,
+                    Err(_) => break,
+                },
+            };
             match event {
                 Event::Http { req, reply } => {
                     let response = self.handle_http(req, color)?;

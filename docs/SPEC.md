@@ -484,8 +484,21 @@ place is skipped.
 milliseconds and `time.every(ms, block)` again and again; both return an
 Object whose `stop()` cancels it. As in JavaScript, timers run once the main
 program has finished, in time order. `lipi run` runs them after the file's
-code (not while a web server started by `server.start` is running); an error
-in a timer stops that timer and is shown, and the others go on.
+code; an error in a timer stops that timer and is shown, and the others go on.
+
+With a web server (1.3), timers keep running between requests, which is how a
+background job is written: a sweep, a reminder, a retry. A timer's block and a
+request handler take their turns on the same thread, one at a time, so neither
+sees the other half-finished. A timer that fails while the server is running
+is reported and stopped like a failing handler; the server keeps serving.
+
+```lipi
+server.start 3000
+
+time.every 60000
+    for order in db.orders.where(status: "pending")
+        chaseUp(order)
+```
 
 ### 15.1 Web server
 
@@ -955,10 +968,11 @@ IDENT          = ( LETTER | "_" ) { LETTER | DIGIT | "_" } ;   (* ASCII *)
 | `type` blocks | A simple object model: fields and methods, and (1.2) single inheritance with `extends` and `super` |
 | Patterns | A missing field is an error, not null (typos are caught); extra Array items are ignored |
 | Regex | One pattern language for both engines (JavaScript's, minus lookaround and backreferences), with character positions |
-| Timers | Run after the main program, as in JavaScript's event loop |
+| Timers | Run after the main program, as in JavaScript's event loop, and between requests once a web server is serving (1.3) |
 
 ## 20. Not yet implemented
 
-The hosted LiPi Registry service, forms and validation helpers, source maps and minified production builds,
-the debugger, permission-aware I/O, generics/traits, generators (`yield`), regex lookaround and backreferences,
-and timers while a `lipi run` web server is running.
+The hosted LiPi Registry service, validation helpers, source maps and minified production builds,
+prerendering a page's contents into its HTML file (the file carries the page's name and description, not yet
+its text), file uploads to a `server` route, the debugger, permission-aware I/O, generics/traits,
+generators (`yield`), and regex lookaround and backreferences.
