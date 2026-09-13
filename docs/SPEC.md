@@ -1,4 +1,4 @@
-# LiPi Language Specification — v1.0
+# LiPi Language Specification — v2.0
 
 LiPi was created by Harsh Pal Singh ([@iamharshpalsingh](https://github.com/iamharshpalsingh)).
 
@@ -127,7 +127,7 @@ Otherwise it creates a local variable in the current function; it never creates
 a hidden global. Parameters and `catch` names are local. Closures capture
 variables by reference.
 
-`for` is the exception (1.3): its variables belong to the loop and each round
+`for` is the exception (2.0): its variables belong to the loop and each round
 of the loop binds them afresh, so a function made inside the body keeps the
 item it was made with. They aren't visible after the loop — keep what you need
 in a variable defined before it:
@@ -486,7 +486,7 @@ Object whose `stop()` cancels it. As in JavaScript, timers run once the main
 program has finished, in time order. `lipi run` runs them after the file's
 code; an error in a timer stops that timer and is shown, and the others go on.
 
-With a web server (1.3), timers keep running between requests, which is how a
+With a web server (2.0), timers keep running between requests, which is how a
 background job is written: a sweep, a reminder, a retry. A timer's block and a
 request handler take their turns on the same thread, one at a time, so neither
 sees the other half-finished. A timer that fails while the server is running
@@ -611,14 +611,14 @@ page "/orders/:id" with url         # url.path, url.params.id, url.query
   have `:name` parts and a final `*` (in `url.params.rest`); the block's
   optional input (`with url`) holds `path`, `params` and `query`.
   `navigate("/path")` changes page from code.
-- **A page names itself** (1.3): `page "/price", title: "…", description: "…"`.
+- **A page names itself** (2.0): `page "/price", title: "…", description: "…"`.
   `lipi build` writes one HTML file per page (`dist/price/index.html`) carrying
   that name and description as `<title>`, `<meta name="description">` and
   Open Graph tags, so a search engine or a chat app sees the page rather than
   one shell for the whole site, and `--site https://your.site` adds canonical
   addresses, `sitemap.xml` and `robots.txt`. The title and description also
   update as the app moves between pages.
-- **Addresses** (1.3): served over http(s), the app uses real addresses
+- **Addresses** (2.0): served over http(s), the app uses real addresses
   (`/price`) that can be copied, shared and crawled, and moves between pages
   without reloading. Opened straight from a file it falls back to the `#/path`
   form, which needs no server. A page whose path has `:name` parts has no
@@ -650,13 +650,13 @@ page "/orders/:id" with url         # url.path, url.params.id, url.query
   | `button label, disabled: false` + block | the block runs on click |
   | `field value, placeholder: "…", type: "text"` `with value` + block | text box; the block gets the new text. `lines: 4` makes it that many lines tall |
   | `checkbox checked, label` `with checked` + block | the block gets true or false |
-  | `select value, options: […], placeholder: "…"` `with chosen` + block | a dropdown (1.3); an option is a value or `{value, label}` |
-  | `upload label, accept: "image/*", multiple: false` `with files` + block | choose files (1.3); see below |
+  | `select value, options: […], placeholder: "…"` `with chosen` + block | a dropdown (2.0); an option is a value or `{value, label}` |
+  | `upload label, accept: "image/*", multiple: false` `with files` + block | choose files (2.0); see below |
   | `link label, to: "/page"` | app page, or an `https:`/`http:`/`mailto:`/`tel:` address (opens in a new tab) |
   | `image source, alt: "…"` | image |
   | `element "tag", …` + block | any other element except script/style/embeds (LIP6003) |
 
-- **`action:`** (1.3) makes any element clickable: `action:` takes a function,
+- **`action:`** (2.0) makes any element clickable: `action:` takes a function,
   and anything that isn't already a control also gets `role="button"` and
   `tabindex="0"`, so Enter and Space work for someone not using a mouse. It's
   how a whole card becomes one tappable tile:
@@ -854,12 +854,13 @@ stdio, so any LSP editor can use it. It provides:
 `lipi lsp` and adds syntax highlighting, indentation rules, comment toggling,
 bracket matching, format-on-save and the LiPi file icon.
 
-## 18. Grammar (EBNF, v1.2)
+## 18. Grammar (EBNF, v2.0)
 
-The grammar is stable for LiPi 1.x (see [STABILITY.md](STABILITY.md)): 1.x
-releases only add forms that used to be errors. 1.2 added spread and rest
-(`...`), patterns (`{a, b} = x`, `[a, b] = x`, `for {a} in xs`) and `extends`.
-`tests/conformance` uses every form below.
+The grammar is stable for LiPi 2.x (see [STABILITY.md](STABILITY.md)): 2.x
+releases only add forms that used to be errors. It is unchanged from 1.2, which
+added spread and rest (`...`), patterns (`{a, b} = x`, `[a, b] = x`,
+`for {a} in xs`) and `extends`; 2.0 changed what a `for` loop's variables mean
+(§5), not how one is written. `tests/conformance` uses every form below.
 
 ```ebnf
 (* Layout: a block is the lines indented 4 spaces deeper than the line that
@@ -962,13 +963,13 @@ IDENT          = ( LETTER | "_" ) { LETTER | DIGIT | "_" } ;   (* ASCII *)
 | Object vs map | One Object type with String keys; `obj.x` is strict, `obj["x"]` is lenient |
 | Module cycles | Error LIP3002 |
 | Scope resolution | Decided before the program runs: an assignment updates the variable of that name in the nearest enclosing function or file that assigns it, else creates a local. `lipi run` and `lipi build` share this rule (`lipi_compiler::scope`) |
-| `for` variables | Scoped to the loop and bound afresh each round (1.3), so a function made in the body keeps its own item. Python leaks the last value and repeats one binding; JavaScript's `let` and Rust behave as LiPi does. Using the variable after the loop is LIP1002, with a hint saying where it went |
+| `for` variables | Scoped to the loop and bound afresh each round (2.0), so a function made in the body keeps its own item. Python leaks the last value and repeats one binding; JavaScript's `let` and Rust behave as LiPi does. Using the variable after the loop is LIP1002, with a hint saying where it went |
 | Match syntax | Patterns directly (no `when`), `else`, `_`, guards with `if` |
 | Extra keywords | `show`, `repeat`, `break`, `continue` (from the plan's examples and loop needs) |
 | `type` blocks | A simple object model: fields and methods, and (1.2) single inheritance with `extends` and `super` |
 | Patterns | A missing field is an error, not null (typos are caught); extra Array items are ignored |
 | Regex | One pattern language for both engines (JavaScript's, minus lookaround and backreferences), with character positions |
-| Timers | Run after the main program, as in JavaScript's event loop, and between requests once a web server is serving (1.3) |
+| Timers | Run after the main program, as in JavaScript's event loop, and between requests once a web server is serving (2.0) |
 
 ## 20. Not yet implemented
 

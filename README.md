@@ -94,21 +94,24 @@ Hint: "age" is a String. Convert it to a number or use a numeric value.
 state cart = []
 
 component ProductCard(product)
-    card
+    card action: () => cart.push(product)
         heading product.name
         text "₹{product.price}"
-        button "Add to cart"
-            cart.push(product)
 
-page "/"
+page "/", title: "LiPi Shop", description: "Chai, coffee and everything between."
     heading "LiPi Shop", level: 1
     for product in products
         ProductCard(product)
     text "{cart.length} items in the cart"
 ```
 
-`lipi build` turns this into `dist/index.html` + `app.js`. Clicking the button
-changes `cart` and the page redraws. See
+`lipi build` turns this into `app.js` and one HTML file per page — each with
+its own address, name and description, so a search engine or a chat app sees
+the page and not one shell for the whole site. `--site https://your.site` adds
+canonical addresses, `sitemap.xml` and `robots.txt`. Clicking the card
+changes `cart` and the page redraws. Forms have text boxes, dropdowns,
+checkboxes and file uploads, and `action:` makes any element clickable — with
+the keyboard too. See
 [`examples/web_shop.lipi`](examples/web_shop.lipi) and
 [SPEC §15.3](docs/SPEC.md#153-web-ui-lipi-ui). During development, `lipi dev`
 serves the app and reloads it on every save. Existing JavaScript libraries and
@@ -181,10 +184,11 @@ paid = db.orders.where(status: "paid", order: "-id")
 db.orders.update(order.id, {status: "paid"})
 ```
 
-The full reference is [docs/SPEC.md](docs/SPEC.md). From 1.0 the language is
-frozen: programs keep working across 1.x releases
-([docs/STABILITY.md](docs/STABILITY.md)), and the promise is checked by the
-conformance suite in [`tests/conformance`](tests/conformance).
+The full reference is [docs/SPEC.md](docs/SPEC.md). The language is frozen
+within a major version: programs keep working across every 2.x release
+([docs/STABILITY.md](docs/STABILITY.md), which also covers the one change
+between 1.x and 2.0), and the promise is checked by the conformance suite in
+[`tests/conformance`](tests/conformance).
 
 ## Creator
 
@@ -233,8 +237,9 @@ LIPI_TEST_POSTGRES_URL=postgres://postgres@localhost:5432/postgres cargo test -p
 | 0.8 | web platform: JS target (`lipi build`, web + Node, LIP6001 browser boundary), LiPi UI (pages, components, state, events), JS interop (`js`), `lipi dev` with live reload | ✅ |
 | 1.0 | stable language: frozen grammar + [stability promise](docs/STABILITY.md), conformance suite, faster interpreter, installers, getting-started guide | ✅ |
 | 1.2 | JavaScript's everyday features (spread/rest, patterns, `extends`/`super`, regex, encoding, timers, more methods) in both engines; online playground | ✅ |
-| 1.x | debugger, docs site, hosted package registry | next |
-| 2.x | WASM, native, desktop, Android, iOS | planned |
+| 2.0 | web apps that hold up in the real world: per-round `for` bindings (breaking), dropdowns, long fields, file uploads, `action:` on any element, an address and an HTML file per page with titles, descriptions and a sitemap, and timers that keep running with a web server | ✅ |
+| 2.x | prerendered page contents, debugger, docs site, hosted package registry | next |
+| 3.x | WASM, native, desktop, Android, iOS | planned |
 
 ### Known limitations
 

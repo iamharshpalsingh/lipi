@@ -1,5 +1,65 @@
 # Changelog
 
+## 2.0.0
+
+Everything a real web app needed and LiPi had no answer for.
+
+### Breaking: `for` loops bind their variables afresh each round
+
+A loop kept one binding for its variables, so a function made inside the body —
+every button in a list — saw whatever the last round left there. Both engines
+now give each round its own binding:
+
+```lipi
+adders = []
+for n in 1 to 3
+    adders.push(x => x + n)
+show adders.map(f => f(10))     # [11, 12, 13], was [13, 13, 13]
+```
+
+The loop's variables belong to the loop and aren't visible after it; what the
+body assigns still belongs to the function around it, so a running total is
+unaffected. Reading one after its loop is LIP1002, found by `lipi check` with a
+hint saying where it went — that is the only thing to change when moving from
+1.x, and [docs/STABILITY.md](docs/STABILITY.md) walks through it.
+
+### New
+
+**Form elements.** `select value, options: [...] with chosen` is a dropdown
+(an option is a value or `{value, label}`); `field note, lines: 4` is a box
+several lines tall; `upload "Add a photo", accept: "image/*" with files` hands
+its block each chosen file as `{name, type, size, dataUrl, text}`, already read.
+
+**`action:` on any element.** It makes a card, a row or anything else
+clickable, and adds `role="button"` and `tabindex="0"` so Enter and Space work
+for someone not using a mouse — no more transparent button stretched over a
+tile because `button` only takes text.
+
+```lipi
+for brand in brands
+    card class: "tile", action: () => pick(brand)
+        text brand.name
+```
+
+**Every page gets its own address and its own HTML file.** A page can name
+itself, and `lipi build` writes `dist/price/index.html` for each one, carrying
+its `<title>`, description and Open Graph tags, plus `404.html`:
+
+```lipi
+page "/price", title: "Price — Fixy", description: "The exact price, before you book."
+```
+
+`--site https://your.site` adds canonical addresses, `sitemap.xml` and
+`robots.txt`. Served over http(s) the app uses real addresses (`/price`) and
+moves between pages without reloading; opened from a file it falls back to the
+`#/path` form, so a build still works from disk. `lipi dev` serves the same
+addresses.
+
+**Timers keep running with a web server.** `time.after` and `time.every` used
+to run only after the main program finished, which with `server.start` meant
+never. Background jobs — sweeps, reminders, retries — now belong in the same
+program as the routes, taking their turns on the same thread as the handlers.
+
 ## 1.2.0
 
 JavaScript's everyday features, in both engines (`lipi run` and `lipi build`),

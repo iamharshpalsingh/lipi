@@ -176,4 +176,4 @@ APIs are reachable through the `js` module ([SPEC §15.4](SPEC.md#154-javascript
 - [The language specification](SPEC.md): everything, with examples
 - [`examples/`](../examples): a CLI, an API server, a notes app with a
   database, a web shop
-- [The stability promise](STABILITY.md): what stays the same across 1.x releases
+- [The stability promise](STABILITY.md): what stays the same across releases

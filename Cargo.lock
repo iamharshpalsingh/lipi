@@ -512,7 +512,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "lipi"
-version = "1.2.0"
+version = "2.0.0"
 dependencies = [
  "embed-resource",
  "flate2",
@@ -527,11 +527,11 @@ dependencies = [
 
 [[package]]
 name = "lipi_compiler"
-version = "1.2.0"
+version = "2.0.0"
 
 [[package]]
 name = "lipi_runtime"
-version = "1.2.0"
+version = "2.0.0"
 dependencies = [
  "base64",
  "bytes",
@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "lipi_web"
-version = "1.2.0"
+version = "2.0.0"
 dependencies = [
  "lipi_compiler",
 ]
