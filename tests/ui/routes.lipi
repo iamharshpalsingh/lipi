@@ -1,0 +1,16 @@
+# Pages name themselves, and the addresses they use are real ones once the app
+# is served by a web server: /price, not #/price.
+page "/", title: "Chai Shop — fresh chai, delivered", description: "Order chai and have it at your door in twenty minutes."
+    heading "Chai Shop", level: 1
+    link "See the price", to: "/price"
+    button "Go to the shop"
+        navigate("/shop")
+
+page "/price", title: "Price — Chai Shop", description: "What a cup costs, before you order."
+    heading "Price", level: 1
+    text "One cup: 20 rupees"
+    link "Back", to: "/"
+
+page "/shop", title: "Shop — Chai Shop"
+    heading "Shop", level: 1
+    link "Back", to: "/"

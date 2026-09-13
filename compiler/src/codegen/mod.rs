@@ -57,6 +57,49 @@ fn js_module_available(name: &str, target: Target) -> bool {
     }
 }
 
+/// A page the build found, for the static HTML file that fronts it.
+#[derive(Debug, Clone)]
+pub struct PageInfo {
+    pub path: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+}
+
+impl PageInfo {
+    /// Pages with `:name` or `*` parts need a server to route them, so no
+    /// static file can stand in for them.
+    pub fn is_static(&self) -> bool {
+        !self.path.split('/').any(|part| part.starts_with(':') || part == "*")
+    }
+}
+
+/// What a web build produced.
+#[derive(Debug)]
+pub struct Built {
+    pub js: String,
+    /// The pages declared anywhere in the program, in the order they were found.
+    pub pages: Vec<PageInfo>,
+}
+
+/// The `page "/path", title: "…"` declarations at the top level of a file.
+/// Only plain text is read: a path or title built at run time can't be known here.
+fn collect_pages(body: &[Stmt], out: &mut Vec<PageInfo>) {
+    let text = |e: &Expr| match &e.kind {
+        ExprKind::Str(s) => Some(s.clone()),
+        _ => None,
+    };
+    for stmt in body {
+        let StmtKind::Expr(e) = &stmt.kind else { continue };
+        let ExprKind::Call { callee, args } = &e.kind else { continue };
+        if !matches!(&callee.kind, ExprKind::Ident(n) if n == "page") {
+            continue;
+        }
+        let Some(path) = args.iter().find(|a| a.name.is_none()).and_then(|a| text(&a.value)) else { continue };
+        let named = |want: &str| args.iter().find(|a| a.name.as_ref().is_some_and(|n| n.text == want)).and_then(|a| text(&a.value));
+        out.push(PageInfo { path, title: named("title"), description: named("description") });
+    }
+}
+
 /// Why a build failed.
 #[derive(Debug)]
 pub struct BuildError {
@@ -86,7 +129,7 @@ type R<T> = Result<T, Fail>;
 
 /// Compile `entry` and everything it uses into a JavaScript bundle.
 /// `builtins` are the interpreter's global names (so the checker agrees with `lipi run`).
-pub fn build(entry: &Path, target: Target, builtins: &[&str]) -> Result<String, BuildError> {
+pub fn build(entry: &Path, target: Target, builtins: &[&str]) -> Result<Built, BuildError> {
     let shown = entry.to_string_lossy().to_string();
     let source = std::fs::read_to_string(entry).map_err(|e| {
         let hint = if e.kind() == std::io::ErrorKind::NotFound { resolve::missing_file_hint(entry) } else { e.to_string() };
@@ -99,7 +142,7 @@ pub fn build(entry: &Path, target: Target, builtins: &[&str]) -> Result<String, 
     let mut g = Gen::new(target, builtins, resolve::find_project_root(entry));
     let canon = entry.canonicalize().unwrap_or_else(|_| entry.to_path_buf());
     g.compile_source(canon, shown, source).map_err(|e| *e)?;
-    Ok(g.bundle())
+    Ok(Built { js: g.bundle(), pages: std::mem::take(&mut g.pages) })
 }
 
 /// Compile one program given as text, with no files around it (the browser
@@ -162,6 +205,8 @@ struct Gen<'a> {
     modules: Vec<Option<Module>>,
     ids: HashMap<PathBuf, usize>,
     loading: Vec<PathBuf>,
+    /// Pages found while compiling, for the static HTML files the build writes.
+    pages: Vec<PageInfo>,
     st: FileState,
 }
 
@@ -292,6 +337,7 @@ impl<'a> Gen<'a> {
             modules: Vec::new(),
             ids: HashMap::new(),
             loading: Vec::new(),
+            pages: Vec::new(),
             st: FileState::default(),
         }
     }
@@ -301,6 +347,7 @@ impl<'a> Gen<'a> {
     fn compile_source(&mut self, canon: PathBuf, shown: String, source: String) -> Result<usize, Box<BuildError>> {
         let fail = |diags: Vec<Diagnostic>| Box::new(BuildError { diags, file: shown.clone(), source: source.clone() });
         let program = crate::parse_source(&source).map_err(|d| fail(vec![d]))?;
+        collect_pages(&program.body, &mut self.pages);
         let mut errors: Vec<Diagnostic> = checker::check(&program, &self.builtin_list).into_iter().filter(|d| d.severity == Severity::Error).collect();
         if !errors.is_empty() {
             // Like `lipi run`: every error in the main file, the first one in a module.
@@ -1363,7 +1410,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("scope.lipi");
         std::fs::write(&file, src).unwrap();
-        let js = build(&file, Target::Node, &[]).map_err(|e| e.render(false)).unwrap();
+        let js = build(&file, Target::Node, &[]).map_err(|e| e.render(false)).unwrap().js;
         let _ = std::fs::remove_dir_all(&dir);
         // `count` belongs to the module; `local` to the function.
         assert!(js.contains("let v_bump, v_count;"), "{js}");

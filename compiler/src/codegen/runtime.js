@@ -1785,7 +1785,7 @@ function $start(entry) {
 // Redraws happen after every event handler, after state changes, and when an
 // awaited handler finishes.
 
-const $ui = { pages: [], stack: null, instances: new Map(), seen: null, path: [], root: null, old: [], scheduled: false, started: false, rules: new Set() };
+const $ui = { pages: [], stack: null, instances: new Map(), seen: null, path: [], root: null, old: [], scheduled: false, started: false, rules: new Set(), paths: false, base: "" };
 /// Style options that become CSS rules (inline styles can't express them).
 const UI_STATE_STYLES = new Set(["hover", "focus", "mobile", "desktop"]);
 const MOBILE_MAX = 720;
@@ -2022,8 +2022,14 @@ function installUI() {
     const target = named && named.to !== undefined ? named.to : pos[1];
     if (typeof target !== "string") $fail("LIP5008", "a link needs to say where it goes", s, 'For example: link "About", to: "/about"');
     const a = common("link", named, s);
-    if (target.startsWith("/")) a.href = "#" + target;
-    else if (/^(https?:|mailto:|tel:)/i.test(target)) { a.href = target; a.target = "_blank"; a.rel = "noopener noreferrer"; }
+    if (target.startsWith("/")) {
+      // Real addresses when the app is served by a web server (so the link can
+      // be copied, shared and crawled), `#/path` when it's opened from a file.
+      if ($ui.paths) {
+        a.href = $ui.base + target;
+        a["data-lipi-page"] = "";
+      } else a.href = "#" + target;
+    } else if (/^(https?:|mailto:|tel:)/i.test(target)) { a.href = target; a.target = "_blank"; a.rel = "noopener noreferrer"; }
     else $fail("LIP6003", `"${target}" isn't a link LiPi can open safely`, s, 'Link to a page of this app ("/about") or to an address that starts with https://, http://, mailto: or tel:.');
     emit(vnode("a", a, texts(pos[0] === undefined ? [target] : [pos[0]])));
     return null;
@@ -2105,13 +2111,18 @@ function installUI() {
     if (typeof path !== "string" || !path.startsWith("/")) $fail("LIP5008", "a page needs a path that starts with /", s, 'For example: page "/about"');
     if (typeof block !== "function") $fail("LIP5008", "a page needs an indented block that draws it", s);
     if ($ui.pages.some((p) => p.path === path)) $fail("LIP5008", `there's already a page for "${path}"`, s);
-    $ui.pages.push({ path, parts: path.split("/").filter((x) => x !== ""), block, s });
+    for (const k of Object.keys(named || {})) {
+      if (k !== "title" && k !== "description") $fail("LIP5008", `page has no option "${k}"`, s, didYouMean(k, ["title", "description"]) || "Its options are: title, description");
+    }
+    const title = named && named.title !== undefined ? display(named.title) : null;
+    const description = named && named.description !== undefined ? display(named.description) : null;
+    $ui.pages.push({ path, parts: path.split("/").filter((x) => x !== ""), block, s, title, description });
     return null;
   });
   def("navigate", (pos, named, s) => {
     const path = pos[0];
     if (typeof path !== "string" || !path.startsWith("/")) $fail("LIP5008", "navigate needs the path of a page", s, 'For example: navigate("/cart")');
-    if (typeof location !== "undefined") location.hash = "#" + path;
+    uiGo(path);
     return null;
   });
   $rt.changed = () => { if ($ui.started && $ui.stack === null) uiSchedule(); };
@@ -2119,9 +2130,49 @@ function installUI() {
 
 function uiDecode(x) { try { return decodeURIComponent(x); } catch { return x; } }
 
-/// The page for the current address (`#/products/7`) and its route object.
+/// Where the app lives. `lipi build` writes one HTML file per page, and each
+/// one says which page it is in `window.lipiRoute`; taking that off the end of
+/// the address leaves the folder the app was deployed in. With no such file —
+/// a page opened straight from disk, or the playground — addresses stay in the
+/// `#/path` form, which works without a server.
+function uiSetupRoutes() {
+  const route = typeof window !== "undefined" ? window.lipiRoute : undefined;
+  if (typeof location === "undefined" || typeof route !== "string" || !/^https?:$/.test(location.protocol)) return;
+  $ui.paths = true;
+  const here = location.pathname.replace(/index\.html$/, "");
+  const want = route === "/" ? "" : route;
+  if (want && here.endsWith(want + "/")) $ui.base = here.slice(0, here.length - want.length - 1);
+  else if (want && here.endsWith(want)) $ui.base = here.slice(0, -want.length);
+  else $ui.base = here.replace(/\/$/, "");
+}
+
+/// Go to another page of the app, by address when the app is served and by
+/// `#/path` when it isn't.
+function uiGo(path) {
+  if (typeof location === "undefined") return;
+  if ($ui.paths && typeof history !== "undefined" && history.pushState) {
+    history.pushState({}, "", $ui.base + path);
+    uiSchedule();
+    return;
+  }
+  location.hash = "#" + path;
+}
+
+/// The address the router should look at: the hash when there is one (so an
+/// app opened from a file still works), otherwise the real path.
+function uiAddress() {
+  if (typeof location === "undefined") return "";
+  const hash = location.hash.replace(/^#/, "");
+  if (hash !== "" || !$ui.paths) return hash;
+  let path = location.pathname.replace(/index\.html$/, "");
+  if ($ui.base && path.startsWith($ui.base)) path = path.slice($ui.base.length);
+  if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+  return path + location.search;
+}
+
+/// The page for the current address (`#/products/7` or `/products/7`) and its route object.
 function uiRoute() {
-  const raw = typeof location !== "undefined" ? location.hash.replace(/^#/, "") : "";
+  const raw = uiAddress();
   const q = raw.indexOf("?");
   let path = q < 0 ? raw : raw.slice(0, q);
   if (!path.startsWith("/")) path = "/" + path;
@@ -2177,6 +2228,7 @@ function uiRender() {
   for (const k of Array.from($ui.instances.keys())) if (!$ui.seen.has(k)) $ui.instances.delete(k);
   patchChildren($ui.root, $ui.old, list);
   $ui.old = list;
+  uiHead(m.page);
 }
 
 /// Run an event handler, then redraw (again when an async handler finishes).
@@ -2261,8 +2313,24 @@ function patchChildren(dom, olds, news) {
   for (let i = nodes.length - 1; i >= news.length; i--) dom.removeChild(nodes[i]);
 }
 
+/// The tab's name and the description search engines and chat apps show. The
+/// HTML file already carries them; this keeps them right as pages change.
+function uiHead(page) {
+  if (typeof document === "undefined" || !page) return;
+  if (page.title) document.title = page.title;
+  if (!page.description || typeof document.querySelector !== "function") return;
+  let tag = document.querySelector('meta[name="description"]');
+  if (!tag) {
+    tag = document.createElement("meta");
+    tag.setAttribute("name", "description");
+    document.head.appendChild(tag);
+  }
+  tag.setAttribute("content", page.description);
+}
+
 function uiStart() {
   $ui.started = true;
+  uiSetupRoutes();
   if (!document.getElementById("lipi-style")) {
     const style = document.createElement("style");
     style.id = "lipi-style";
@@ -2275,7 +2343,22 @@ function uiStart() {
     $ui.root.id = "app";
     document.body.insertBefore($ui.root, document.body.firstChild);
   }
-  if (typeof window !== "undefined") window.addEventListener("hashchange", uiSchedule);
+  if (typeof window !== "undefined") {
+    window.addEventListener("hashchange", uiSchedule);
+    window.addEventListener("popstate", uiSchedule);
+  }
+  // A link to another page of the app changes page without reloading it.
+  if ($ui.paths && $ui.root.addEventListener) {
+    $ui.root.addEventListener("click", (ev) => {
+      if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button) return;
+      let el = ev.target;
+      while (el && el !== $ui.root && el.tagName !== "A") el = el.parentNode;
+      if (!el || el.tagName !== "A" || !el.getAttribute || el.getAttribute("data-lipi-page") === null) return;
+      ev.preventDefault();
+      history.pushState({}, "", el.getAttribute("href"));
+      uiSchedule();
+    });
+  }
   uiRender();
 }
 

@@ -313,6 +313,33 @@ page "/about" with url
 
 ---
 
+## Har page ka apna naam aur address (SEO)
+
+Page ko apna naam aur ek line ka description do:
+
+```lipi
+page "/price", title: "Price — Fixy", description: "Phone ka exact price, bina login ke."
+    heading "Price", level: 1
+```
+
+`lipi build` har page ki alag HTML file banata hai — `dist/price/index.html` —
+jisme wahi title, description aur Open Graph tags hote hain. Matlab Google aur
+WhatsApp ko poori site ka ek hi shell nahi, **wo page** dikhta hai.
+
+```sh
+lipi build --site https://fixy.in
+```
+
+`--site` dene par canonical address, `sitemap.xml` aur `robots.txt` bhi ban
+jaate hain.
+
+Server pe chalte waqt address asli hote hain (`/price`), file se kholne par
+`#/price` — dono chalte hain, aap ko kuch karna nahi padta. Jis page ke path me
+`:id` jaisa part ho uski apni file nahi banti; aise address ke liye host ko
+`index.html` (ya build ka likha hua `404.html`) dena hota hai.
+
+---
+
 ## Website ko online daalna
 
 ```

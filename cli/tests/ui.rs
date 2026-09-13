@@ -85,6 +85,56 @@ fn hover_and_screen_size_styles_become_css_rules() {
 }
 
 #[test]
+fn every_page_gets_its_own_html_file_and_a_real_address() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let out_dir = std::env::temp_dir().join(format!("lipi-routes-test-{}", std::process::id()));
+    let build = Command::new(env!("CARGO_BIN_EXE_lipi"))
+        .args(["build", "tests/ui/routes.lipi", "--out", &out_dir.to_string_lossy(), "--site", "https://chai.example"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    let read = |p: &str| std::fs::read_to_string(out_dir.join(p)).unwrap_or_else(|e| panic!("{p}: {e}"));
+    // Each page is its own file, with its own name, description and address.
+    let price = read("price/index.html");
+    assert!(price.contains("<title>Price — Chai Shop</title>"), "{price}");
+    assert!(price.contains(r#"<meta name="description" content="What a cup costs, before you order.">"#), "{price}");
+    assert!(price.contains(r#"<link rel="canonical" href="https://chai.example/price">"#), "{price}");
+    assert!(price.contains(r#"window.lipiRoute = "/price";"#) && price.contains(r#"src="../app.js""#), "{price}");
+    let home = read("index.html");
+    assert!(home.contains("<title>Chai Shop — fresh chai, delivered</title>") && home.contains(r#"src="app.js""#), "{home}");
+    // A static host answers an unknown address with 404.html, which routes itself.
+    assert!(read("404.html").contains("window.lipiRoute"));
+    let map = read("sitemap.xml");
+    assert!(map.contains("<loc>https://chai.example/</loc>") && map.contains("<loc>https://chai.example/shop</loc>"), "{map}");
+    assert!(read("robots.txt").contains("Sitemap: https://chai.example/sitemap.xml"));
+
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("node isn't installed; skipping the routing half of the test");
+        let _ = std::fs::remove_dir_all(&out_dir);
+        return;
+    }
+    let dom = root.join("cli").join("tests").join("ui_dom.js");
+    let served = Command::new("node")
+        .arg(&dom)
+        .arg(out_dir.join("app.js"))
+        .args(["--route", "/", "click:See the price", "click:Back", "click:Go to the shop", "visit:/price"])
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&served.stdout).replace("\r\n", "\n");
+    assert!(served.status.success(), "{out}\n{}", String::from_utf8_lossy(&served.stderr));
+    // Served by a web server: real addresses, and links that can be copied.
+    assert!(out.contains(r#"href="/price""#) && !out.contains(r##"href="#/price""##), "{out}");
+    assert!(out.contains("[at /price]") && out.contains("[at /shop]"), "{out}");
+    // Opened from a file: the same app, with `#/path` addresses that need no server.
+    let offline = Command::new("node").arg(&dom).arg(out_dir.join("app.js")).args(["click:See the price"]).output().unwrap();
+    let out = String::from_utf8_lossy(&offline.stdout).replace("\r\n", "\n");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(offline.status.success(), "{out}");
+    assert!(out.contains(r##"href="#/""##) && out.contains("One cup: 20 rupees"), "{out}");
+}
+
+#[test]
 fn dropdowns_long_fields_uploads_and_action_all_work() {
     if Command::new("node").arg("--version").output().is_err() {
         eprintln!("node isn't installed; skipping the form test");

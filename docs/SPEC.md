@@ -596,9 +596,21 @@ page "/orders/:id" with url         # url.path, url.params.id, url.query
 
 - **Pages:** `page "/path"` + block, declared at the top level. Paths can
   have `:name` parts and a final `*` (in `url.params.rest`); the block's
-  optional input (`with url`) holds `path`, `params` and `query`. Addresses use
-  the `#/path` form, so a build works when opened straight from disk.
+  optional input (`with url`) holds `path`, `params` and `query`.
   `navigate("/path")` changes page from code.
+- **A page names itself** (1.3): `page "/price", title: "…", description: "…"`.
+  `lipi build` writes one HTML file per page (`dist/price/index.html`) carrying
+  that name and description as `<title>`, `<meta name="description">` and
+  Open Graph tags, so a search engine or a chat app sees the page rather than
+  one shell for the whole site, and `--site https://your.site` adds canonical
+  addresses, `sitemap.xml` and `robots.txt`. The title and description also
+  update as the app moves between pages.
+- **Addresses** (1.3): served over http(s), the app uses real addresses
+  (`/price`) that can be copied, shared and crawled, and moves between pages
+  without reloading. Opened straight from a file it falls back to the `#/path`
+  form, which needs no server. A page whose path has `:name` parts has no
+  static file of its own, so the host must answer unknown addresses with
+  `index.html` (or the `404.html` the build writes).
 - **Drawing:** a page's block runs from the top on every redraw. Each element
   call adds to the element being drawn, so `if`, `for` and function calls
   work as usual. Components are functions that draw; calling them outside
@@ -742,12 +754,15 @@ build error is printed in the terminal and shown on the page until it's fixed.
 Files in `public/` are served as they are, and `lipi build` copies them into
 the output folder.
 
-**JavaScript builds:** `lipi build [file] [--target web|node] [--out dist]`
+**JavaScript builds:** `lipi build [file] [--target web|node] [--out dist] [--site URL]`
 compiles a program and every file it uses into one JavaScript bundle.
 
-- `--target web` (the default) writes `dist/index.html` and `dist/app.js`.
-  `show` prints to the page and the browser console; an uncaught error is
-  shown on the page in the usual format.
+- `--target web` (the default) writes `dist/app.js`, `dist/404.html` and one
+  HTML file per page: `dist/index.html`, `dist/price/index.html`, and so on
+  (§15.3). `show` prints to the page and the browser console; an uncaught error
+  is shown on the page in the usual format.
+- `--site https://your.site` adds each page's canonical address and writes
+  `sitemap.xml` and `robots.txt`.
 - `--target node` writes `dist/app.cjs`, which runs with `node dist/app.cjs`
   and also has `fs`, `env` and `process`.
 - The output keeps LiPi's semantics: Integers are exact over the full 64-bit

@@ -19,12 +19,14 @@ struct Build {
     version: u64,
     js: String,
     error: Option<String>,
+    pages: Vec<codegen::PageInfo>,
 }
 
 struct Shared {
     build: Mutex<Build>,
     changed: Condvar,
-    html: String,
+    /// The app's name, used for a page that doesn't give itself a `title:`.
+    title: String,
     public: PathBuf,
 }
 
@@ -76,7 +78,7 @@ pub fn run(args: &[String]) -> i32 {
     }
     let root = lipi_compiler::resolve::find_project_root(&file);
     let title = file.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "LiPi app".into());
-    let shared = Arc::new(Shared { build: Mutex::new(Build::default()), changed: Condvar::new(), html: crate::web_page(&title, true), public: root.join("public") });
+    let shared = Arc::new(Shared { build: Mutex::new(Build::default()), changed: Condvar::new(), title, public: root.join("public") });
     rebuild(&shared, &file);
 
     let Some(listener) = (port..=port.saturating_add(20)).find_map(|p| TcpListener::bind(("127.0.0.1", p)).ok()) else {
@@ -106,8 +108,9 @@ fn rebuild(shared: &Shared, file: &Path) {
     let result = codegen::build(file, Target::Web, &builtins);
     let mut b = shared.lock();
     match result {
-        Ok(js) => {
-            b.js = js;
+        Ok(built) => {
+            b.js = built.js;
+            b.pages = built.pages;
             b.error = None;
             b.version += 1;
             println!("built {} in {} ms", file.display(), started.elapsed().as_millis());
@@ -181,7 +184,6 @@ fn handle(stream: TcpStream, shared: &Shared) -> io::Result<()> {
     }
     let path = target.split(['?', '#']).next().unwrap_or("/");
     match path {
-        "/" | "/index.html" => respond(&mut stream, 200, "text/html; charset=utf-8", shared.html.as_bytes()),
         "/app.js" => {
             let js = shared.lock().js.clone();
             respond(&mut stream, 200, "text/javascript; charset=utf-8", js.as_bytes())
@@ -189,9 +191,40 @@ fn handle(stream: TcpStream, shared: &Shared) -> io::Result<()> {
         "/__lipi/events" => events(stream, shared),
         other => match public_file(&shared.public, other) {
             Some((bytes, mime)) => respond(&mut stream, 200, mime, &bytes),
+            // An address that looks like one of the app's pages is answered
+            // with the app, so real addresses work here the way they will once
+            // it's deployed. An address that looks like a file is not.
+            None if looks_like_a_page(other) => respond(&mut stream, 200, "text/html; charset=utf-8", page_html(shared, other).as_bytes()),
             None => respond(&mut stream, 404, "text/plain", b"not found"),
         },
     }
+}
+
+/// A page's address has no file extension and nothing that climbs out of the site.
+fn looks_like_a_page(path: &str) -> bool {
+    let last = path.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+    path.starts_with('/') && !path.split('/').any(|p| p == "..") && (last.is_empty() || last == "index.html" || !last.contains('.'))
+}
+
+/// The HTML shell for one address, naming the page so the router and the tab
+/// title are right before a single line of the app has run.
+fn page_html(shared: &Shared, path: &str) -> String {
+    let route = match path.trim_end_matches("index.html").trim_end_matches('/') {
+        "" => "/".to_string(),
+        p => p.to_string(),
+    };
+    let b = shared.lock();
+    let found = b.pages.iter().find(|p| p.path == route).cloned();
+    drop(b);
+    let depth = route.split('/').filter(|p| !p.is_empty()).count();
+    crate::web_page(&crate::HtmlPage {
+        title: found.as_ref().and_then(|p| p.title.as_deref()).unwrap_or(&shared.title),
+        description: found.as_ref().and_then(|p| p.description.as_deref()),
+        route: &route,
+        up: "../".repeat(depth),
+        canonical: None,
+        dev: true,
+    })
 }
 
 fn respond(stream: &mut TcpStream, status: u16, mime: &str, body: &[u8]) -> io::Result<()> {

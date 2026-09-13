@@ -420,6 +420,7 @@ fn cmd_build(args: &[String]) -> i32 {
     use lipi_compiler::codegen::{self, Target};
     let mut target = Target::Web;
     let mut out_dir = PathBuf::from("dist");
+    let mut site: Option<String> = None;
     let mut files = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -429,7 +430,7 @@ fn cmd_build(args: &[String]) -> i32 {
             _ => (a, None),
         };
         match flag {
-            "--target" | "-t" | "--out" | "-o" => {
+            "--target" | "-t" | "--out" | "-o" | "--site" => {
                 let value = match inline {
                     Some(v) => Some(v),
                     None => {
@@ -443,6 +444,8 @@ fn cmd_build(args: &[String]) -> i32 {
                 };
                 if matches!(flag, "--out" | "-o") {
                     out_dir = PathBuf::from(value);
+                } else if flag == "--site" {
+                    site = Some(value.trim_end_matches('/').to_string());
                 } else {
                     target = match value.as_str() {
                         "web" | "browser" => Target::Web,
@@ -464,13 +467,14 @@ fn cmd_build(args: &[String]) -> i32 {
     };
     let names = Interpreter::new().builtin_names();
     let builtins: Vec<&str> = names.iter().map(String::as_str).collect();
-    let js = match codegen::build(&file, target, &builtins) {
-        Ok(js) => js,
+    let built = match codegen::build(&file, target, &builtins) {
+        Ok(b) => b,
         Err(e) => {
             eprint!("{}", e.render(color()));
             return 1;
         }
     };
+    let js = built.js;
     if let Err(e) = std::fs::create_dir_all(&out_dir) {
         eprintln!("lipi: couldn't create {}: {e}", out_dir.display());
         return 1;
@@ -494,9 +498,68 @@ fn cmd_build(args: &[String]) -> i32 {
             println!("Run it with: node {}", out_dir.join("app.cjs").display());
         }
         Target::Web => {
-            let title = file.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "LiPi app".into());
-            if !write("app.js", &js) || !write("index.html", &web_page(&title, false)) {
+            let app_name = file.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "LiPi app".into());
+            if !write("app.js", &js) {
                 return 1;
+            }
+            // One HTML file per page, each with its own address, name and
+            // description, so a search engine or a chat app sees the page
+            // itself instead of one shell for the whole site.
+            let home = built.pages.iter().find(|p| p.path == "/");
+            let root_page = HtmlPage {
+                title: home.and_then(|p| p.title.as_deref()).unwrap_or(&app_name),
+                description: home.and_then(|p| p.description.as_deref()),
+                route: "/",
+                up: String::new(),
+                canonical: site.as_ref().map(|s| format!("{s}/")),
+                dev: false,
+            };
+            if !write("index.html", &web_page(&root_page)) {
+                return 1;
+            }
+            // A static host answers an unknown address with 404.html, which
+            // lets the app route it itself.
+            if !write("404.html", &web_page(&HtmlPage { route: "/", ..root_page })) {
+                return 1;
+            }
+            let mut written = 1;
+            let mut needs_server = Vec::new();
+            for p in built.pages.iter().filter(|p| p.path != "/") {
+                if !p.is_static() {
+                    needs_server.push(p.path.clone());
+                    continue;
+                }
+                let rel = p.path.trim_start_matches('/');
+                let dir = out_dir.join(rel);
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    eprintln!("lipi: couldn't create {}: {e}", dir.display());
+                    return 1;
+                }
+                let page = HtmlPage {
+                    title: p.title.as_deref().unwrap_or(&app_name),
+                    description: p.description.as_deref(),
+                    route: &p.path,
+                    up: "../".repeat(rel.split('/').count()),
+                    canonical: site.as_ref().map(|s| format!("{s}{}", p.path)),
+                    dev: false,
+                };
+                let path = dir.join("index.html");
+                if let Err(e) = std::fs::write(&path, web_page(&page)) {
+                    eprintln!("lipi: couldn't write {}: {e}", path.display());
+                    return 1;
+                }
+                written += 1;
+            }
+            if let Some(base) = &site {
+                let mut map = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n");
+                for p in built.pages.iter().filter(|p| p.is_static()) {
+                    let url = if p.path == "/" { format!("{base}/") } else { format!("{base}{}", p.path) };
+                    map.push_str(&format!("  <url><loc>{}</loc></url>\n", escape_html(&url)));
+                }
+                map.push_str("</urlset>\n");
+                if !write("sitemap.xml", &map) || !write("robots.txt", &format!("User-agent: *\nAllow: /\nSitemap: {base}/sitemap.xml\n")) {
+                    return 1;
+                }
             }
             // Images, styles and JavaScript files the app uses go in public/.
             let public = lipi_compiler::resolve::find_project_root(&file).join("public");
@@ -509,7 +572,13 @@ fn cmd_build(args: &[String]) -> i32 {
                     }
                 }
             }
-            println!("Built {} and {} from {}", out_dir.join("index.html").display(), out_dir.join("app.js").display(), file.display());
+            println!("Built {} and {} HTML file{} from {}", out_dir.join("app.js").display(), written, if written == 1 { "" } else { "s" }, file.display());
+            if !needs_server.is_empty() {
+                println!("Pages with :parts need a server that answers them with index.html: {}", needs_server.join(", "));
+            }
+            if site.is_none() && written > 1 {
+                println!("Add --site https://your.site to write sitemap.xml, robots.txt and canonical addresses.");
+            }
             println!("Open index.html in a browser, or serve the folder with any static file server.");
         }
     }
@@ -556,9 +625,29 @@ const DEV_SCRIPT: &str = r#"<script>
 </script>
 "#;
 
+/// What one HTML file of a web build says about itself. `lipi build` writes one
+/// per page, so every page has its own address, name and description for
+/// search engines, chat previews and anyone who copies the link.
+#[derive(Default)]
+struct HtmlPage<'a> {
+    title: &'a str,
+    description: Option<&'a str>,
+    /// The page this file stands for ("/", "/price"), which the router reads.
+    route: &'a str,
+    /// How to reach app.js from this file ("" at the root, "../" one level down).
+    up: String,
+    /// The full address of this page, when the build was told the site's address.
+    canonical: Option<String>,
+    dev: bool,
+}
+
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
 /// The page that loads a web build.
-fn web_page(title: &str, dev: bool) -> String {
-    let reload = if dev { DEV_SCRIPT } else { "" };
+fn web_page(p: &HtmlPage) -> String {
+    let reload = if p.dev { DEV_SCRIPT } else { "" };
     const LOGO: &str = include_str!("../../assets/lipi-mark.svg");
     let mut icon = String::from("data:image/svg+xml,");
     for c in LOGO.trim().chars() {
@@ -574,7 +663,19 @@ fn web_page(title: &str, dev: bool) -> String {
             }
         }
     }
-    let title = title.replace('&', "&amp;").replace('<', "&lt;");
+    let title = escape_html(p.title);
+    let (up, route) = (&p.up, escape_html(p.route));
+    let mut head = String::new();
+    if let Some(d) = p.description {
+        let d = escape_html(d);
+        head.push_str(&format!("<meta name=\"description\" content=\"{d}\">\n"));
+        head.push_str(&format!("<meta property=\"og:description\" content=\"{d}\">\n"));
+    }
+    head.push_str(&format!("<meta property=\"og:title\" content=\"{title}\">\n<meta property=\"og:type\" content=\"website\">\n"));
+    if let Some(url) = &p.canonical {
+        let url = escape_html(url);
+        head.push_str(&format!("<link rel=\"canonical\" href=\"{url}\">\n<meta property=\"og:url\" content=\"{url}\">\n"));
+    }
     format!(
         r#"<!doctype html>
 <html lang="en">
@@ -582,7 +683,7 @@ fn web_page(title: &str, dev: bool) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
-<link rel="icon" href="{icon}">
+{head}<link rel="icon" href="{icon}">
 <style>
   body {{ font-family: system-ui, sans-serif; margin: 2rem; color: #17120E; background: #FBF8F3; }}
   #lipi-output {{ font: 15px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; }}
@@ -593,7 +694,8 @@ fn web_page(title: &str, dev: bool) -> String {
 <body>
 <div id="app"></div>
 <pre id="lipi-output" hidden></pre>
-<script src="app.js"></script>
+<script>window.lipiRoute = "{route}";</script>
+<script src="{up}app.js"></script>
 {reload}</body>
 </html>
 "#

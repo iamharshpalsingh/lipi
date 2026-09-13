@@ -68,10 +68,19 @@ globalThis.document = {
 };
 globalThis.window = { addEventListener(type, f) { (windowListeners[type] = windowListeners[type] || []).push(f); } };
 let hash = "";
+// `--route /price` stands for one of the HTML files `lipi build` writes, which
+// is what turns on real addresses instead of `#/path`.
+const routeAt = process.argv.indexOf("--route");
+let pathname = routeAt > 0 ? process.argv[routeAt + 1] : "/";
+if (routeAt > 0) window.lipiRoute = process.argv[routeAt + 1];
 globalThis.location = {
+  protocol: "http:",
+  search: "",
+  get pathname() { return pathname; },
   get hash() { return hash; },
   set hash(v) { hash = v.startsWith("#") ? v : "#" + v; for (const f of windowListeners.hashchange || []) f(); },
 };
+globalThis.history = { pushState(_state, _title, url) { pathname = String(url).split("?")[0]; } };
 
 // Just enough of the File APIs for `upload` blocks.
 globalThis.FileReader = class {
@@ -93,7 +102,8 @@ function html(n) {
 const settle = () => new Promise((r) => setTimeout(r, 0)).then(() => new Promise((r) => setTimeout(r, 0)));
 
 async function main() {
-  const [bundle, ...steps] = process.argv.slice(2);
+  const args = process.argv.slice(2).filter((a, i, all) => a !== "--route" && all[i - 1] !== "--route");
+  const [bundle, ...steps] = args;
   require(require("path").resolve(bundle));
   await settle();
   console.log("--- start\n" + html(app));
@@ -106,7 +116,14 @@ async function main() {
       if (!el) throw new Error(`nothing to click called "${arg}"`);
       // "press" reaches the same thing with the keyboard instead of the mouse.
       if (action === "press") el.dispatch("keydown", { key: "Enter" });
-      else if (el.tagName === "A") location.hash = el.getAttribute("href");
+      else if (el.tagName === "A") {
+        const href = el.getAttribute("href");
+        if (href.startsWith("#")) location.hash = href;
+        else {
+          pathname = href;
+          for (const f of windowListeners.popstate || []) f();
+        }
+      }
       else el.dispatch("click");
     } else if (action === "pick") {
       const el = all(app).find((e) => e.tagName === "SELECT" && e.childNodes.some((o) => o.getAttribute("value") === arg));
@@ -133,9 +150,14 @@ async function main() {
       box.dispatch("change");
     } else if (action === "go") {
       location.hash = "#" + arg;
+    } else if (action === "visit") {
+      // Like using the browser's back button, or opening the address directly.
+      pathname = arg;
+      for (const f of windowListeners.popstate || []) f();
     }
     await settle();
-    console.log(`--- ${step}\n` + html(app));
+    const where = window.lipiRoute === undefined ? "" : ` [at ${location.pathname}]`;
+    console.log(`--- ${step}${where}\n` + html(app));
   }
   const rules = document.getElementById("lipi-rules");
   if (rules) console.log("--- rules\n" + rules.textContent);
